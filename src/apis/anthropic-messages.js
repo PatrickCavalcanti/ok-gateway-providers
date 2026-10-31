@@ -32,17 +32,21 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   const ctx = { provider: account.provider, model: model.id };
 
   const system = buildSystem(request.system, compat);
+  if (!Array.isArray(request.messages)) throw invalid('messages precisa ser uma lista', ctx);
   const messages = buildMessages(request.messages, model, compat, ctx);
 
   const effort = request.effort;
   const adaptive = effort !== undefined && effort !== 'none';
+  // O thinking vai rodar: adaptive pedido por `effort`, ou o padrão do modelo sem `effort: 'none'`.
   const thinkingOn = compat.reasoningFormat === 'anthropic_thinking'
-    && (adaptive || (effort === undefined && compat.thinkingByDefault));
+    && (adaptive || (effort !== 'none' && !!compat.thinkingByDefault));
 
   /** @type {Record<string, any>} */
   const body = {
     model: model.id,
-    max_tokens: request.maxTokens ?? model.maxTokens ?? (compat.thinkingByDefault ? 16000 : 1024),
+    // O `model.maxTokens` do catálogo é o teto do modelo, não um padrão: não entra aqui.
+    // Com o thinking rodando ele consome o orçamento de saída, então o padrão sobe para 16000.
+    max_tokens: request.maxTokens ?? (thinkingOn ? 16000 : 1024),
     messages,
     stream: true,
   };
@@ -70,7 +74,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   }
   if (Object.keys(outputConfig).length) body.output_config = outputConfig;
 
-  if (request.temperature !== undefined && compat.supportsTemperature && !thinkingOn) {
+  // Modelo que pensa por padrão responde 400 a `temperature`, mesmo com `effort: 'none'`
+  // (o Gateway nunca a manda para eles); com o adaptive ligado ela também é recusada.
+  if (request.temperature !== undefined && compat.supportsTemperature
+    && !compat.thinkingByDefault && !thinkingOn) {
     body.temperature = request.temperature;
   }
 
@@ -118,12 +125,19 @@ function buildMessages(messages, model, compat, ctx) {
   const out = [];
   messages.forEach((msg, i) => {
     const where = `messages[${i}]`;
+    if (!msg || typeof msg !== 'object') throw invalid(`${where}: mensagem malformada (esperado um objeto)`, ctx);
     if (msg.role === 'assistant') {
       /** @type {Block[]} */
       const content = partsToBlocks(msg.content, model, compat, ctx, where, false);
-      for (const call of msg.toolCalls ?? []) {
+      const calls = msg.toolCalls ?? [];
+      if (!Array.isArray(calls)) throw invalid(`${where}: toolCalls precisa ser uma lista`, ctx);
+      calls.forEach((call, k) => {
+        const at = `${where}.toolCalls[${k}]`;
+        if (!call || typeof call !== 'object') throw invalid(`${at}: tool_call malformado (esperado um objeto)`, ctx);
+        if (typeof call.id !== 'string' || !call.id) throw invalid(`${at}: tool_call precisa de id`, ctx);
+        if (typeof call.name !== 'string' || !call.name) throw invalid(`${at}: tool_call precisa de name`, ctx);
         content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, where, ctx) });
-      }
+      });
       if (!content.length) throw invalid(`${where}: mensagem do assistente vazia (sem texto nem tool_calls)`, ctx);
       out.push({ role: 'assistant', content });
       return;
@@ -132,7 +146,13 @@ function buildMessages(messages, model, compat, ctx) {
     let blocks;
     if (msg.role === 'tool') {
       if (!msg.toolCallId) throw invalid(`${where}: mensagem tool precisa de toolCallId`, ctx);
-      blocks = [{ type: 'tool_result', tool_use_id: msg.toolCallId, content: toolResultContent(msg.content, model, compat, ctx, where) }];
+      blocks = [{
+        type: 'tool_result',
+        tool_use_id: msg.toolCallId,
+        content: toolResultContent(msg.content, model, compat, ctx, where),
+        // A API aceita `cache_control` no próprio bloco tool_result; a marca da parte vem para cá.
+        ...cacheField(toolResultCache(msg.content), compat),
+      }];
     } else if (msg.role === 'user') {
       blocks = partsToBlocks(msg.content, model, compat, ctx, where, true);
       if (!blocks.length) throw invalid(`${where}: mensagem do usuário vazia`, ctx);
@@ -168,6 +188,15 @@ function parseArguments(call, where, ctx) {
   }
 }
 
+/** Última marca de cache entre as partes de um resultado de tool. @param {unknown} content @returns {CacheMark|undefined} */
+function toolResultCache(content) {
+  if (!Array.isArray(content)) return undefined;
+  for (let j = content.length - 1; j >= 0; j--) {
+    if (content[j]?.cache) return content[j].cache;
+  }
+  return undefined;
+}
+
 /** @param {Message['content']} content @param {Model} model @param {ResolvedCompat} compat @param {Ctx} ctx @param {string} where */
 function toolResultContent(content, model, compat, ctx, where) {
   if (typeof content === 'string') return content;
@@ -184,10 +213,12 @@ function toolResultContent(content, model, compat, ctx, where) {
  */
 function partsToBlocks(content, model, compat, ctx, where, allowMedia) {
   if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
+  if (!Array.isArray(content)) throw invalid(`${where}: content precisa ser string ou lista de partes`, ctx);
   /** @type {Block[]} */
   const out = [];
   content.forEach((part, j) => {
     const at = `${where}.content[${j}]`;
+    if (!part || typeof part !== 'object') throw invalid(`${at}: parte malformada (esperado um objeto)`, ctx);
     switch (part.type) {
       case 'text':
         if (part.text) out.push({ type: 'text', text: part.text, ...cacheField(part.cache, compat) });
@@ -276,6 +307,11 @@ function normalizeUsage(raw) {
     cacheWrite1h: hasSplit ? num(cc.ephemeral_1h_input_tokens) : 0,
     raw,
   };
+}
+
+/** Stream sem uso nenhum: zerado e marcado, para o custo ficar `none` e não US$ 0. @returns {Usage} */
+function missingUsage() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, missing: true };
 }
 
 /**
@@ -369,7 +405,7 @@ export async function* parseStream(sseEvents, { account, model }) {
   }
   return {
     finishReason: stopReason ? mapStopReason(stopReason) : 'stop',
-    usage: normalizeUsage(usageRaw),
+    usage: Object.keys(usageRaw).length ? normalizeUsage(usageRaw) : missingUsage(),
     reportedCostUsd: null,
   };
 }

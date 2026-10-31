@@ -329,3 +329,19 @@ test('tool_result agrupado e histórico com tool_use chegam ao fio', async () =>
     content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '30C' }, { type: 'text', text: 'e agora?' }],
   });
 });
+
+test('stream sem uso nenhum: usage zerado com missing e custo none, nunca zero silencioso', async () => {
+  const sse = [
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"m","role":"assistant","content":[]}}\n\n',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"oi"}}\n\n',
+    'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ].join('');
+  const priced = { ...baseModel, cost: { input: 1, output: 5 } };
+  const f = fakeFetch(() => sseResponse(sse));
+  const { usage, cost } = await createClient({ account, model: priced, fetch: f }).chat(userHi).result;
+  assert.deepEqual({ ...usage }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, missing: true });
+  assert.deepEqual({ ...cost }, { usd: null, source: 'none' });
+});

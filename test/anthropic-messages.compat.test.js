@@ -123,11 +123,12 @@ test('thinkingByDefault: max_tokens 16000, sem temperature, sem thinking sem eff
   assert.equal(a.temperature, undefined);
   assert.equal(a.thinking, undefined);
 
-  // effort 'none' desliga o thinking: a temperature volta.
+  // effort 'none' desliga o thinking, mas o modelo que pensa por padrão segue recusando temperature (400).
   const b = build({ messages: hi, temperature: 0.2, effort: 'none' }, { mdl }).body;
   assert.deepEqual(b.thinking, { type: 'disabled' });
-  assert.equal(b.temperature, 0.2);
-  assert.equal(b.max_tokens, 16000);
+  assert.equal(b.temperature, undefined);
+  // thinking desligado: o padrão volta a 1024.
+  assert.equal(b.max_tokens, 1024);
 });
 
 test('temperature: entra sem thinking; sai com adaptive ou supportsTemperature false', () => {
@@ -137,10 +138,62 @@ test('temperature: entra sem thinking; sai com adaptive ou supportsTemperature f
   assert.equal(build({ messages: hi, temperature: 0.7 }, { mdl }).body.temperature, undefined);
 });
 
-test('max_tokens: request > model > padrão', () => {
-  assert.equal(build({ messages: hi, maxTokens: 50 }, { mdl: { ...model, maxTokens: 999 } }).body.max_tokens, 50);
-  assert.equal(build({ messages: hi }, { mdl: { ...model, maxTokens: 999 } }).body.max_tokens, 999);
+test('max_tokens: request > padrão; model.maxTokens do catálogo não entra', () => {
+  const mdl = { ...model, maxTokens: 999 };
+  assert.equal(build({ messages: hi, maxTokens: 50 }, { mdl }).body.max_tokens, 50);
+  assert.equal(build({ messages: hi }, { mdl }).body.max_tokens, 1024);
   assert.equal(build({ messages: hi }).body.max_tokens, 1024);
+});
+
+test('max_tokens 16000 sempre que o thinking vai rodar, inclusive adaptive sem thinkingByDefault', () => {
+  assert.equal(build({ messages: hi, effort: 'high' }).body.max_tokens, 16000);
+  assert.equal(build({ messages: hi, effort: 'none' }).body.max_tokens, 1024);
+  assert.equal(build({ messages: hi, effort: 'high', maxTokens: 300 }).body.max_tokens, 300);
+  // sem reasoningFormat anthropic_thinking o thinking não roda
+  const off = { ...model, compat: { reasoningFormat: 'none' } };
+  assert.equal(build({ messages: hi, effort: 'high' }, { mdl: off }).body.max_tokens, 1024);
+  // thinkingByDefault com effort pedido
+  const def = { ...model, compat: { thinkingByDefault: true } };
+  assert.equal(build({ messages: hi, effort: 'low' }, { mdl: def }).body.max_tokens, 16000);
+});
+
+test('cache_control em parte de tool vai para o bloco tool_result', () => {
+  const msgs = (content) => [
+    { role: 'user', content: 'x' },
+    { role: 'assistant', content: 'ok', toolCalls: [{ id: 't1', name: 'a', arguments: '{}' }] },
+    { role: 'tool', toolCallId: 't1', content },
+  ];
+  const tr = (body) => body.messages[2].content[0];
+  const a = tr(build({ messages: msgs([{ type: 'text', text: 'r', cache: { ttl: '1h' } }]) }).body);
+  assert.deepEqual(a, { type: 'tool_result', tool_use_id: 't1', content: 'r', cache_control: { type: 'ephemeral', ttl: '1h' } });
+  const b = tr(build({ messages: msgs([{ type: 'text', text: 'r', cache: {} }]) }).body);
+  assert.deepEqual(b.cache_control, { type: 'ephemeral' });
+  assert.equal(tr(build({ messages: msgs([{ type: 'text', text: 'r' }]) }).body).cache_control, undefined);
+  const mdl = { ...model, compat: { cacheMarker: 'none' } };
+  assert.equal(tr(build({ messages: msgs([{ type: 'text', text: 'r', cache: {} }]) }, { mdl }).body).cache_control, undefined);
+});
+
+test('entrada malformada: invalid_request com retryOther false', () => {
+  const bad = (request, re) => assert.throws(() => build(request), (e) => {
+    assert.equal(e.type, 'invalid_request');
+    assert.equal(e.retryOther, false);
+    assert.match(e.message, re);
+    return true;
+  });
+  bad({ messages: [{ role: 'user' }] }, /content precisa ser string ou lista/);
+  bad({ messages: [{ role: 'user', content: 5 }] }, /content precisa ser string ou lista/);
+  bad({ messages: [{ role: 'user', content: [null] }] }, /parte malformada/);
+  bad({ messages: [null] }, /mensagem malformada/);
+  bad({ messages: 'oi' }, /messages precisa ser uma lista/);
+  bad({ messages: [{ role: 'system', content: 'x' }] }, /não suportado/);
+  bad({ messages: [{ role: 'tool', toolCallId: 't', content: undefined }] }, /content precisa ser string ou lista/);
+  const asst = (toolCalls) => ({ messages: [{ role: 'assistant', content: '', toolCalls }] });
+  bad(asst('x'), /toolCalls precisa ser uma lista/);
+  bad(asst([null]), /tool_call malformado/);
+  bad(asst([{ id: 't', arguments: '{}' }]), /precisa de name/);
+  bad(asst([{ name: 'a', arguments: '{}' }]), /precisa de id/);
+  bad(asst([{ id: 't', name: 'a', arguments: '{oops' }]), /não é um objeto JSON válido/);
+  bad(asst([{ id: 't', name: 'a', arguments: '[1]' }]), /não é um objeto JSON válido/);
 });
 
 test('structuredOutput: output_config monta o formato; none (e outros) dá unsupported', () => {
