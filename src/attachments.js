@@ -12,6 +12,8 @@ import { ProviderError, unsupported } from './errors.js';
 
 /** Transporte de imagem quando o modelo não declara. */
 export const DEFAULT_IMAGE_TRANSPORT = Object.freeze(['data-url', 'url']);
+/** Arquivo (PDF, texto…): só data-url por padrão — é o formato confirmado no Igris. */
+export const DEFAULT_FILE_TRANSPORT = Object.freeze(['data-url']);
 
 /**
  * `mime` → `format` curto usado por `input_audio`/`input_video` (`video/quicktime` → `mov`).
@@ -65,6 +67,18 @@ export function assertMediaSupported(part, model, ctx = {}) {
     return;
   }
 
+  if (part.type === 'file') {
+    const allowed = transport.file ?? DEFAULT_FILE_TRANSPORT;
+    if (part.data === undefined && part.url === undefined) throw invalid(ctx, m, 'parte de arquivo sem data nem url');
+    if (part.data !== undefined) {
+      if (!allowed.includes('data-url')) throw fail('o modelo não aceita arquivo em data-url (transport.file)');
+      if (!part.data.startsWith('data:') && !part.mime) throw invalid(ctx, m, 'arquivo em base64 precisa de mime');
+    } else if (!allowed.includes('url')) {
+      throw fail('o modelo não aceita arquivo por URL (só data-url); baixe o arquivo e envie o conteúdo');
+    }
+    return;
+  }
+
   if (part.type === 'audio') {
     // Sem declaração, o único transporte conhecido é `input_audio`; `null` desliga.
     const t = transport.audio === undefined ? 'input_audio' : transport.audio;
@@ -85,6 +99,21 @@ export function assertMediaSupported(part, model, ctx = {}) {
   } else if (part.data !== undefined && !part.data.startsWith('data:') && !part.mime) {
     throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
   }
+}
+
+/** Nome para arquivo sem `name` (o Chat Completions pede `filename`). @param {string|undefined} mime */
+export function defaultFilename(mime) {
+  if (!mime) return 'arquivo';
+  const base = mime.split(';')[0].trim().toLowerCase();
+  /** @type {Record<string, string>} */
+  const ext = {
+    'application/pdf': 'pdf', 'text/plain': 'txt', 'text/markdown': 'md', 'text/csv': 'csv', 'text/html': 'html',
+    'application/json': 'json',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  };
+  return `arquivo.${ext[base] ?? mediaFormat(base)}`;
 }
 
 /** @param {string} data @param {string|undefined} mime */
@@ -128,6 +157,11 @@ export function toOpenAIContent(content, { model, compat, provider }) {
     if (part.type === 'image') {
       const url = part.data !== undefined ? asDataUrl(part.data, part.mime) : /** @type {string} */ (part.url);
       return { type: 'image_url', image_url: { url } };
+    }
+    if (part.type === 'file') {
+      const fileData = part.data !== undefined ? asDataUrl(part.data, part.mime) : /** @type {string} */ (part.url);
+      const mime = part.mime ?? /^data:([^;,]+)/.exec(fileData)?.[1];
+      return { type: 'file', file: { filename: part.name ?? defaultFilename(mime), file_data: fileData } };
     }
     if (part.type === 'audio') {
       return { type: 'input_audio', input_audio: { data: part.data, format: part.format } };

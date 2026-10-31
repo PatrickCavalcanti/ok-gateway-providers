@@ -62,6 +62,10 @@ export type Transport = {
     image?: ("data-url" | "url")[] | undefined;
     audio?: "input_audio" | null | undefined;
     video?: "input_video" | "video_url" | null | undefined;
+    /**
+     * padrão ['data-url'] (documento: PDF, texto…)
+     */
+    file?: ("data-url" | "url")[] | undefined;
 };
 export type Model = {
     id: string;
@@ -105,6 +109,13 @@ export type Part = {
     data?: string;
     url?: string;
     mime?: string;
+} | {
+    type: "file";
+    data?: string;
+    url?: string;
+    mime?: string;
+    name?: string;
+    cache?: CacheMark;
 };
 export type ToolCall = {
     id: string;

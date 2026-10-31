@@ -8,7 +8,7 @@ Primeira versão: o núcleo (T1.1).
 
 - Vocabulário de operação e forma.
 - Fios `openai-completions` e `anthropic-messages`, operação `chat`: texto, tools,
-  saída estruturada, raciocínio, anexos de imagem, áudio e vídeo.
+  saída estruturada, raciocínio, anexos de imagem, áudio, vídeo e arquivo (PDF, texto…).
 - Compat declarado (conta ← modelo).
 - Uso normalizado, custo em US$ (provedor > tabela > nenhum) e conversor de créditos.
 - Erro tipado com `retryOther` e `emitted`; prazos de primeiro byte, inatividade e total.

@@ -64,6 +64,7 @@
  * @property {('data-url'|'url')[]} [image]  padrão ['data-url','url']
  * @property {'input_audio'|null} [audio]
  * @property {'input_video'|'video_url'|null} [video]
+ * @property {('data-url'|'url')[]} [file]  padrão ['data-url'] (documento: PDF, texto…)
  */
 
 /**
@@ -89,7 +90,8 @@
  * @typedef {{ type: 'text', text: string, cache?: CacheMark }
  *   | { type: 'image', data?: string, url?: string, mime?: string }
  *   | { type: 'audio', data: string, format: string }
- *   | { type: 'video', data?: string, url?: string, mime?: string }} Part
+ *   | { type: 'video', data?: string, url?: string, mime?: string }
+ *   | { type: 'file', data?: string, url?: string, mime?: string, name?: string, cache?: CacheMark }} Part
  */
 
 /** @typedef {{ id: string, name: string, arguments: string }} ToolCall */

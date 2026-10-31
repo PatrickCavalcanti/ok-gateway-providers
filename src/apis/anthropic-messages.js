@@ -230,11 +230,58 @@ function partsToBlocks(content, model, compat, ctx, where, allowMedia) {
         if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar imagem`, ctx);
         out.push(imageBlock(part, model, ctx, at));
         return;
+      case 'file':
+        if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar arquivo`, ctx);
+        out.push({ ...documentBlock(part, model, ctx, at), ...cacheField(part.cache, compat) });
+        return;
       default:
         throw invalid(`${at}: tipo de parte "${/** @type {any} */ (part).type}" desconhecido`, ctx);
     }
   });
   return out;
+}
+
+/**
+ * Arquivo → bloco `document`. A Messages API lê PDF (base64 ou URL) e texto puro
+ * (`source.type: 'text'`); outro tipo de arquivo dá `unsupported`, nunca é descartado.
+ * @param {Extract<Part, { type: 'file' }>} part @param {Model} model @param {Ctx} ctx @param {string} at @returns {Block}
+ */
+function documentBlock(part, model, ctx, at) {
+  if (!model.input?.includes('file')) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: o modelo não declara entrada de arquivo`, ctx);
+  }
+  const transport = model.transport?.file ?? ['data-url'];
+  const raw = part.data ?? part.url;
+  if (!raw) throw invalid(`${at}: arquivo precisa de data ou url`, ctx);
+  /** @type {Block} */
+  const title = part.name ? { title: part.name } : {};
+
+  if (part.data !== undefined || raw.startsWith('data:')) {
+    if (!transport.includes('data-url')) {
+      throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: o modelo não aceita arquivo em data-url`, ctx);
+    }
+    const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(raw);
+    const mediaType = (m?.[1] ?? part.mime ?? '').split(';')[0].trim().toLowerCase();
+    const data = m ? m[3] : raw;
+    if (m && !m[2]) throw invalid(`${at}: data-url de arquivo precisa ser base64`, ctx);
+    if (!mediaType) throw invalid(`${at}: arquivo em base64 precisa de mime`, ctx);
+    if (mediaType === 'application/pdf') {
+      return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data }, ...title };
+    }
+    if (mediaType === 'text/plain') {
+      const text = Buffer.from(data, 'base64').toString('utf8');
+      return { type: 'document', source: { type: 'text', media_type: 'text/plain', data: text }, ...title };
+    }
+    throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: a Messages API só lê arquivo PDF ou text/plain (veio ${mediaType}); converta antes`, ctx);
+  }
+  if (!transport.includes('url')) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: o modelo só aceita arquivo em data-url (baixar a URL é papel do cliente)`, ctx);
+  }
+  const mime = (part.mime ?? 'application/pdf').split(';')[0].trim().toLowerCase();
+  if (mime !== 'application/pdf') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: por URL a Messages API só lê PDF (veio ${mime})`, ctx);
+  }
+  return { type: 'document', source: { type: 'url', url: raw }, ...title };
 }
 
 /** @param {Extract<Part, { type: 'image' }>} part @param {Model} model @param {Ctx} ctx @param {string} at @returns {Block} */

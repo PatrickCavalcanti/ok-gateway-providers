@@ -79,7 +79,8 @@ credits.toCredits(cost.usd); // null continua null
 
 `content` é string ou partes: `{ type: 'text', text, cache? }`,
 `{ type: 'image', data | url, mime }`, `{ type: 'audio', data, format }`,
-`{ type: 'video', data | url, mime }`.
+`{ type: 'video', data | url, mime }`, `{ type: 'file', data | url, mime, name?, cache? }`
+(PDF, texto e outros documentos).
 
 ### Eventos
 
@@ -114,7 +115,13 @@ no stream e sem marcador de cache. Ligue o que o endpoint suporta.
 ### Anexos
 
 `model.transport` diz como cada mídia viaja: `image` (`['data-url', 'url']` por padrão),
-`audio` (`input_audio` ou `null`), `video` (`input_video`, `video_url` ou `null`). Mídia
+`audio` (`input_audio` ou `null`), `video` (`input_video`, `video_url` ou `null`),
+`file` (`['data-url']` por padrão; `'url'` quando o endpoint aceita).
+
+Arquivo no `openai-completions` vai como `{ type: 'file', file: { filename, file_data } }`
+(OpenAI, OpenRouter, Gateway). No `anthropic-messages` vira bloco `document`: a Messages
+API lê **PDF** (base64 ou URL) e **texto puro**; outro tipo (docx, planilha…) dá
+`unsupported` — converter é papel do cliente. Mídia
 que o modelo não declara em `input`, ou que o transporte não suporta, dá erro
 `unsupported` **antes** do fetch. Nada é descartado em silêncio. Baixar uma URL é papel
 do cliente.

@@ -361,4 +361,11 @@ Valem sobre o texto anterior.
 14. **OpenRouter com schema** manda `provider.require_parameters: true` (com
     `providerRouting`). O catálogo declara `transport.video = 'video_url'` e
     `transport.audio = 'input_audio'`.
+16. **Anexo de arquivo** (pedido do dono, 2026-10-31: o Igris já manda PDF e não pode
+    perder na troca). Parte `{ type: 'file', data | url, mime, name?, cache? }`, validada
+    contra `file` no `input` do modelo e `transport.file` (padrão `['data-url']`).
+    `openai-completions`: `{ type: 'file', file: { filename, file_data } }` (formato do
+    `_imageBlocks.js` do Igris; sem `name`, o nome sai do mime). `anthropic-messages`: bloco
+    `document` com `source` `base64` (PDF), `text` (text/plain) ou `url` (PDF); outro mime
+    dá `unsupported`.
 15. **Headers** se fundem sem diferença de caixa: conta ← compat (conta ← modelo) ← fio.

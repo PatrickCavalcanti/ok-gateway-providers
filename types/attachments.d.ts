@@ -16,6 +16,8 @@ export function mediaFormat(mime: string): string;
 export function assertMediaSupported(part: Part, model: Pick<Model, "id" | "input" | "transport">, ctx?: {
     provider?: string;
 }): void;
+/** Nome para arquivo sem `name` (o Chat Completions pede `filename`). @param {string|undefined} mime */
+export function defaultFilename(mime: string | undefined): string;
 /**
  * Campos de marca de cache de um bloco de texto, conforme o `cacheMarker` do compat.
  * Vazio quando não há marca pedida ou o compat não a aceita.
@@ -46,6 +48,8 @@ export function toOpenAIContent(content: string | Part[], { model, compat, provi
 /** @typedef {import('./types.js').ResolvedCompat} ResolvedCompat */
 /** Transporte de imagem quando o modelo não declara. */
 export const DEFAULT_IMAGE_TRANSPORT: readonly string[];
+/** Arquivo (PDF, texto…): só data-url por padrão — é o formato confirmado no Igris. */
+export const DEFAULT_FILE_TRANSPORT: readonly string[];
 export type Part = import("./types.js").Part;
 export type Model = import("./types.js").Model;
 export type ResolvedCompat = import("./types.js").ResolvedCompat;
