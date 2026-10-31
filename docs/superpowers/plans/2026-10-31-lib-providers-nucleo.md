@@ -129,7 +129,8 @@ Valida o modelo contra o pedido **antes** do fetch: `model.operations` sem `chat
   (`missing_operation` · `missing_input` · `missing_output`), `isEligible`,
   `VocabularyError` (`code 'InvalidVocabulary'`). Casos portados de
   `igris/packages/providers/test/vocabulario.test.js` (sem os de capability legada).
-- [ ] **T1.3 `types.js`, `errors.js`, `timeouts.js`, `sse.js`, `compat.js` + testes.**
+- [ ] **T1.3 `types.js`, `errors.js`, `timeouts.js`, `sse.js`, `compat.js`, `cost.js`,
+  `credits.js` + testes** (os de `cost`/`credits` ficam com a T2.3).
 - [ ] **T1.4 `client.js` e `index.js`** com um fio de teste (fake) nos testes do cliente:
   fila de eventos, `result`, `emitted`, timeouts, abort, status HTTP → erro, validação de
   operação, `apiKey` função.
@@ -163,7 +164,9 @@ Verificação: `npm test` e `npm run typecheck` verdes. Commit + push.
   (stop_reason, usage), `error`. Uso: `cache_read_input_tokens`,
   `cache_creation.ephemeral_5m/1h_input_tokens` (ou `cache_creation_input_tokens` como
   5 min). Fixtures em `test/fixtures/anthropic-messages/`.
-- [ ] **T2.3 `cost.js`, `credits.js`, `catalog/openrouter.js` + testes** (Sonnet).
+- [ ] **T2.3 testes de `cost.js` e `credits.js`, e `catalog/openrouter.js` + testes**
+  (Sonnet). *Ajuste na execução:* `cost.js` e `credits.js` entraram na Fase 1, porque o
+  `client.js` depende do `computeCost`; a T2.3 escreve os testes deles.
   Regras da spec §9–§10 e §15 itens 3, 4 e 6. Conferir os números contra
   `igris-gateway/src/credits/pricing.ts` (Haiku 5.5 com contexto longo, cache 1 h, áudio
   com mínimo do Groq). Catálogo: fixture reduzida de `/api/v1/models` (montada à mão a
