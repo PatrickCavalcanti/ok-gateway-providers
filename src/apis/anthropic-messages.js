@@ -328,6 +328,10 @@ export async function* parseStream(sseEvents, { account, model }) {
   /** @type {Map<number, { kind: string, id?: string, name?: string, json: string, initial?: unknown }>} */
   const blocks = new Map();
 
+  /** @type {{ id: string, name: string, arguments: string }[]} */
+  const pendingCalls = [];
+  /** @type {string|undefined} */
+  let lastBlockKind;
   for await (const sse of sseEvents) {
     /** @type {Record<string, any>} */
     let ev;
@@ -364,13 +368,15 @@ export async function* parseStream(sseEvents, { account, model }) {
       case 'content_block_stop': {
         const blk = blocks.get(ev.index);
         blocks.delete(ev.index);
+        if (blk) lastBlockKind = blk.kind;
         if (blk?.kind === 'tool_use') {
           let args = blk.json.trim();
           if (!args) {
             const init = blk.initial;
             args = init && typeof init === 'object' && Object.keys(init).length ? JSON.stringify(init) : '{}';
           }
-          yield { type: 'tool_call', id: String(blk.id ?? ''), name: String(blk.name ?? ''), arguments: args };
+          // Só sai no fim: o stop_reason (max_tokens) chega depois do content_block_stop.
+          pendingCalls.push({ id: String(blk.id ?? ''), name: String(blk.name ?? ''), arguments: args });
         }
         break;
       }
@@ -403,6 +409,18 @@ export async function* parseStream(sseEvents, { account, model }) {
   if (!stopped) {
     throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem message_stop (resposta cortada)` });
   }
+  // Tool call cortada: o último bloco era tool_use e o limite de tokens encerrou a mensagem,
+  // ou o JSON acumulado não fecha. Emitir como completa faria o chamador rodar a ferramenta com lixo.
+  const cutLast = stopReason === 'max_tokens' && lastBlockKind === 'tool_use';
+  for (let i = 0; i < pendingCalls.length; i++) {
+    const c = pendingCalls[i];
+    let valid = true;
+    try { JSON.parse(c.arguments); } catch { valid = false; }
+    if (!valid || (cutLast && i === pendingCalls.length - 1)) {
+      throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool call cortada (${c.name}${valid ? ', stop_reason max_tokens' : ', input não é JSON'})` });
+    }
+  }
+  for (const c of pendingCalls) yield { type: 'tool_call', ...c };
   return {
     finishReason: stopReason ? mapStopReason(stopReason) : 'stop',
     usage: Object.keys(usageRaw).length ? normalizeUsage(usageRaw) : missingUsage(),

@@ -129,7 +129,8 @@ test('cacheMarker cache_control marca system e partes de texto; none não leva a
   const off = build({ request }).body.messages;
   assert.equal(off[0].content, 'regrastom'); // sem separador: o texto original do chamador
   assert.equal(JSON.stringify(off).includes('cache_control'), false);
-  assert.equal(off[1].content, 'contextopergunta'); // só texto e sem marca: string
+  // várias partes de texto ficam lista: colar juntaria palavras
+  assert.deepEqual(off[1].content, [{ type: 'text', text: 'contexto' }, { type: 'text', text: 'pergunta' }]);
 });
 
 test('cacheMarker prompt_cache_breakpoint marca system, user e tool', () => {
@@ -157,9 +158,10 @@ test('cacheMarker cache_control também marca mensagem tool; none descarta a mar
   assert.equal(build({ request }).body.messages[0].content, 'r');
 });
 
-test('user só com texto e sem marcas vai como string; com mídia segue lista', () => {
+test('user com uma parte só de texto e sem marca vai como string; várias ou com mídia seguem lista', () => {
   const text = [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }];
-  assert.equal(build({ request: { messages: [{ role: 'user', content: text }] } }).body.messages[0].content, 'ab');
+  assert.equal(build({ request: { messages: [{ role: 'user', content: [text[0]] }] } }).body.messages[0].content, 'a');
+  assert.deepEqual(build({ request: { messages: [{ role: 'user', content: text }] } }).body.messages[0].content, text);
   const img = { type: 'image', data: 'QUJD', mime: 'image/png' };
   const out = build({ model: { input: ['text', 'image'] }, request: { messages: [{ role: 'user', content: [text[0], img] }] } }).body.messages[0].content;
   assert.equal(Array.isArray(out), true);

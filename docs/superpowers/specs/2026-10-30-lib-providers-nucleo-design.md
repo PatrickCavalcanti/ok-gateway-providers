@@ -345,3 +345,20 @@ Valem sobre o texto anterior.
 9. **Métodos por operação** usam os nomes da lib: `chat`, `decide`, `embed`,
    `transcribe`, `speak`, `generateImage`. As funções de capability legada do Igris não
    vêm para a lib.
+
+### 15.1 Ajustes da revisão do conjunto (2026-10-31)
+
+10. **Uso não declarado.** `usage.missing: true` quando o provedor não manda uso; o custo
+    pela tabela vira `{ usd: null, source: 'none' }`, nunca US$ 0.
+11. **`max_tokens`.** Nunca cai em `model.maxTokens` (o catálogo preenche o máximo do
+    modelo e o OpenRouter responde 402/400). Na Anthropic, sem `maxTokens` no pedido: 16000
+    sempre que o thinking vai rodar (`effort` ≠ `none`, ou `thinkingByDefault` sem
+    `effort: 'none'`), senão 1024 — mais largo que a §11, igual ao Igris e ao Gateway.
+12. **Tool call cortada** (limite de tokens ou JSON que não fecha) é erro `upstream`, nos
+    dois fios; na Anthropic as `tool_call` saem no fim da mensagem.
+13. **Pedido malformado** é `invalid_request` com `retryOther: false`; falha da função
+    `apiKey` é `auth`.
+14. **OpenRouter com schema** manda `provider.require_parameters: true` (com
+    `providerRouting`). O catálogo declara `transport.video = 'video_url'` e
+    `transport.audio = 'input_audio'`.
+15. **Headers** se fundem sem diferença de caixa: conta ← compat (conta ← modelo) ← fio.

@@ -77,9 +77,9 @@ test('o pedido sai para /chat/completions com os headers do fio', async () => {
   const [call] = f.calls;
   assert.equal(call.url, 'https://or.test/api/v1/chat/completions');
   assert.equal(call.init.method, 'POST');
-  assert.equal(call.init.headers.Authorization, 'Bearer sk-test');
-  assert.equal(call.init.headers['Content-Type'], 'application/json');
-  assert.equal(call.init.headers.Accept, 'text/event-stream');
+  assert.equal(call.init.headers.authorization, 'Bearer sk-test');
+  assert.equal(call.init.headers['content-type'], 'application/json');
+  assert.equal(call.init.headers.accept, 'text/event-stream'); // o cliente normaliza a caixa
   assert.equal(call.body.stream, true);
   assert.deepEqual(call.body.messages, [{ role: 'user', content: 'oi' }]);
 });

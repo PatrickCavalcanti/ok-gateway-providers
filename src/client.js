@@ -109,7 +109,7 @@ function startChat({ account, model, request, doFetch }) {
         throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: pedido malformado — ${msg}` });
       }
       // Ordem: headers fixos da conta ← compat (conta ← modelo) ← os do fio (auth, content-type), que não se sobrescrevem.
-      const headers = { ...(account.headers ?? {}), ...compat.headers, ...built.headers };
+      const headers = mergeHeaders(account.headers, compat.headers, built.headers);
       if (local.signal.aborted) throw fromFailure(new Error('aborted'), 'aborted', ctx, false);
 
       /** @type {Response} */
@@ -190,6 +190,18 @@ function fromFailure(err, reason, ctx, emitted) {
   }
   const msg = err instanceof Error ? err.message : String(err);
   return new ProviderError({ type: 'upstream', emitted, ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: falha de rede ou leitura — ${msg}` });
+}
+
+/**
+ * Merge de headers sem diferença de caixa (`Authorization` e `authorization` são o mesmo):
+ * a última camada vence. As chaves saem em minúsculas.
+ * @param {...(Record<string, string>|undefined)} layers
+ */
+function mergeHeaders(...layers) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const layer of layers) for (const [k, v] of Object.entries(layer ?? {})) out[k.toLowerCase()] = v;
+  return out;
 }
 
 /** Fila de um produtor e um consumidor. */

@@ -167,8 +167,9 @@ function systemContent(system, compat) {
 function userContent(content, ctx) {
   if (typeof content === 'string') return content;
   const parts = toOpenAIContent(content, ctx);
-  // Só texto e sem marca: string, que é o que endpoints antigos exigem.
-  if (parts.every((p) => p.type === 'text' && Object.keys(p).length === 2)) return parts.map((p) => p.text).join('');
+  // Uma parte só de texto e sem marca: string, que é o que endpoints antigos exigem. Com
+  // várias, a lista fica — colar partes juntaria palavras.
+  if (parts.length === 1 && parts[0].type === 'text' && Object.keys(parts[0]).length === 2) return parts[0].text;
   return parts;
 }
 
@@ -273,11 +274,13 @@ export async function* parseStream(events, { account, model }) {
       }
       // Cortada (finish length) ou JSON incompleto: emitir `arguments` inválido como se fosse
       // completo faria o chamador executar a ferramenta com lixo.
-      const args = c.args || '{}';
+      // Um objeto JSON válido não é prefixo cortado de outro; vazio com `length`, sim.
+      const empty = !c.args.trim();
+      const args = empty ? '{}' : c.args;
       let valid = true;
       try { JSON.parse(args); } catch { valid = false; }
-      if (!valid || finishReason === 'length') {
-        throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool call cortada (${c.name}${finishReason === 'length' ? ', finish_reason length' : ', arguments não é JSON'})` });
+      if (!valid || (empty && finishReason === 'length')) {
+        throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool call cortada (${c.name}${valid ? ', finish_reason length sem argumentos' : ', arguments não é JSON'})` });
       }
       // Provedor que não manda id: o do índice basta, o cliente devolve o mesmo no papel tool.
       yield /** @type {const} */ ({ type: 'tool_call', id: c.id || `call_${index}`, name: c.name, arguments: args });

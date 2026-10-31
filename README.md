@@ -127,8 +127,10 @@ do cliente.
 |---|---|---|
 | 401, 403 | `auth` | true |
 | 429 | `rate_limit` | true |
-| 400, 404, 422 | `invalid_request` | true |
-| 5xx, rede | `upstream` | true |
+| 400, 404, 422 do provedor | `invalid_request` | true (outro modelo pode aceitar) |
+| pedido malformado (mensagem sem `content`, `toolCalls` inválido…) | `invalid_request` | **false** |
+| falha ao obter a chave (`apiKey` função) | `auth` | true |
+| 5xx, rede, stream cortado, tool call cortada | `upstream` | true |
 | prazo (primeiro byte, inatividade, total) | `timeout` | true |
 | mídia ou parâmetro sem suporte | `unsupported` | true |
 | `signal` do chamador | `aborted` | false |
@@ -142,6 +144,13 @@ Regra de fallback do consumidor: passe ao próximo alvo só com `retryOther && !
 1 h) à parte, faixas de contexto longo (`cost.tiers`) e áudio por segundo com mínimo;
 sem tabela, `usd: null` (`none`) — nunca um valor inventado. Cache sem preço declarado
 sai ao preço de input.
+
+Quando o provedor não declara uso nenhum (conta sem `usageInStream`, stream que caiu antes
+do chunk de uso), `usage.missing` vem `true` e o custo pela tabela é `{ usd: null, source:
+'none' }` — **não** US$ 0. Quem cobra precisa tratar esse caso.
+
+`max_tokens` só vai no corpo quando o pedido traz `maxTokens` (a Anthropic exige o campo:
+1024, ou 16000 quando o raciocínio vai rodar).
 
 ### Catálogo
 
