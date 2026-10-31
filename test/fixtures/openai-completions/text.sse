@@ -1,0 +1,14 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1730400000-aBcD","provider":"Inception","model":"inception/mercury","object":"chat.completion.chunk","created":1730400000,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-1730400000-aBcD","provider":"Inception","model":"inception/mercury","object":"chat.completion.chunk","created":1730400000,"choices":[{"index":0,"delta":{"role":"assistant","content":"Olá"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-1730400000-aBcD","provider":"Inception","model":"inception/mercury","object":"chat.completion.chunk","created":1730400000,"choices":[{"index":0,"delta":{"role":"assistant","content":", mundo!"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-1730400000-aBcD","provider":"Inception","model":"inception/mercury","object":"chat.completion.chunk","created":1730400000,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop","native_finish_reason":"stop","logprobs":null}]}
+
+data: {"id":"gen-1730400000-aBcD","provider":"Inception","model":"inception/mercury","object":"chat.completion.chunk","created":1730400000,"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":6,"total_tokens":126,"cost":0.0000451,"prompt_tokens_details":{"cached_tokens":100,"cache_write_tokens":0},"completion_tokens_details":{"reasoning_tokens":0}}}
+
+data: [DONE]
+

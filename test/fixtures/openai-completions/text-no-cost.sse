@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-9x","object":"chat.completion.chunk","created":1730400000,"model":"mercury","choices":[{"index":0,"delta":{"role":"assistant","content":"Oi"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9x","object":"chat.completion.chunk","created":1730400000,"model":"mercury","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: {"id":"chatcmpl-9x","object":"chat.completion.chunk","created":1730400000,"model":"mercury","choices":[],"usage":{"prompt_tokens":1000000,"completion_tokens":500000,"total_tokens":1500000}}
+
+data: [DONE]
+

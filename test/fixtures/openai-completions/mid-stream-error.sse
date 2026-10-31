@@ -1,0 +1,4 @@
+data: {"id":"gen-e1","object":"chat.completion.chunk","created":1730400003,"model":"x/y","choices":[{"index":0,"delta":{"role":"assistant","content":"Começo da resposta"},"finish_reason":null}]}
+
+data: {"id":"gen-e1","object":"chat.completion.chunk","created":1730400003,"model":"x/y","error":{"code":502,"message":"Provider disconnected"},"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"error"}]}
+
