@@ -1,0 +1,375 @@
+// ok-gateway-providers — fio `anthropic-messages` (spec §11).
+//
+// Monta o corpo de `POST {baseUrl}/messages` e lê o SSE da Messages API. Fetch, status
+// HTTP, prazos e custo são do `client.js`; aqui só o formato do fio.
+
+import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
+
+/** @typedef {import('../types.js').Model} Model */
+/** @typedef {import('../types.js').Part} Part */
+/** @typedef {import('../types.js').Message} Message */
+/** @typedef {import('../types.js').ResolvedCompat} ResolvedCompat */
+/** @typedef {import('../types.js').ChatRequest} ChatRequest */
+/** @typedef {import('../types.js').CacheMark} CacheMark */
+/** @typedef {import('../types.js').Usage} Usage */
+/** @typedef {import('../types.js').StreamSummary} StreamSummary */
+/** @typedef {import('../sse.js').SSEEvent} SSEEvent */
+/** @typedef {Record<string, any>} Block */
+/** @typedef {{ provider: string, model: string }} Ctx */
+
+export const api = 'anthropic-messages';
+
+const ANTHROPIC_VERSION = '2023-06-01';
+/** Chaves do corpo que `params` nunca sobrescreve. */
+const PROTECTED = new Set(['model', 'messages', 'system', 'stream', 'tools']);
+
+/**
+ * Monta o pedido HTTP. Lança `ProviderError` `unsupported` / `invalid_request` antes do fetch.
+ * @type {import('../types.js').ApiModule['buildRequest']}
+ */
+export function buildRequest({ account, model, compat, request, apiKey }) {
+  /** @type {Ctx} */
+  const ctx = { provider: account.provider, model: model.id };
+
+  const system = buildSystem(request.system, compat);
+  const messages = buildMessages(request.messages, model, compat, ctx);
+
+  const effort = request.effort;
+  const adaptive = effort !== undefined && effort !== 'none';
+  const thinkingOn = compat.reasoningFormat === 'anthropic_thinking'
+    && (adaptive || (effort === undefined && compat.thinkingByDefault));
+
+  /** @type {Record<string, any>} */
+  const body = {
+    model: model.id,
+    max_tokens: request.maxTokens ?? model.maxTokens ?? (compat.thinkingByDefault ? 16000 : 1024),
+    messages,
+    stream: true,
+  };
+  if (system) body.system = system;
+
+  if (request.tools?.length) {
+    body.tools = request.tools.map((t) => ({
+      name: t.name,
+      ...(t.description ? { description: t.description } : {}),
+      input_schema: t.parameters ?? { type: 'object', properties: {} },
+    }));
+  }
+
+  /** @type {Record<string, any>} */
+  const outputConfig = {};
+  if (compat.reasoningFormat === 'anthropic_thinking' && effort !== undefined) {
+    body.thinking = { type: adaptive ? 'adaptive' : 'disabled' };
+    if (adaptive) outputConfig.effort = effort;
+  }
+  if (request.responseSchema) {
+    if (compat.structuredOutput !== 'output_config') {
+      throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara saída estruturada (compat.structuredOutput = "${compat.structuredOutput}")`, ctx);
+    }
+    outputConfig.format = { type: 'json_schema', schema: request.responseSchema.schema };
+  }
+  if (Object.keys(outputConfig).length) body.output_config = outputConfig;
+
+  if (request.temperature !== undefined && compat.supportsTemperature && !thinkingOn) {
+    body.temperature = request.temperature;
+  }
+
+  for (const extra of [model.params, request.params]) {
+    if (!extra) continue;
+    for (const [k, v] of Object.entries(extra)) {
+      if (!PROTECTED.has(k) && v !== undefined) body[k] = v;
+    }
+  }
+
+  return {
+    url: `${account.baseUrl.replace(/\/+$/, '')}/messages`,
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'content-type': 'application/json',
+      accept: 'text/event-stream',
+    },
+    body,
+  };
+}
+
+/** @param {CacheMark|undefined} cache @param {ResolvedCompat} compat @returns {Block} */
+function cacheField(cache, compat) {
+  if (!cache || compat.cacheMarker !== 'cache_control') return {};
+  return { cache_control: cache.ttl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' } };
+}
+
+/** @param {ChatRequest['system']} system @param {ResolvedCompat} compat @returns {Block[]|undefined} */
+function buildSystem(system, compat) {
+  if (system === undefined || system === '') return undefined;
+  if (typeof system === 'string') return [{ type: 'text', text: system }];
+  const blocks = system
+    .filter((b) => b.text)
+    .map((b) => ({ type: 'text', text: b.text, ...cacheField(b.cache, compat) }));
+  return blocks.length ? blocks : undefined;
+}
+
+/**
+ * @param {Message[]} messages @param {Model} model @param {ResolvedCompat} compat @param {Ctx} ctx
+ * @returns {{ role: 'user'|'assistant', content: Block[] }[]}
+ */
+function buildMessages(messages, model, compat, ctx) {
+  /** @type {{ role: 'user'|'assistant', content: Block[] }[]} */
+  const out = [];
+  messages.forEach((msg, i) => {
+    const where = `messages[${i}]`;
+    if (msg.role === 'assistant') {
+      /** @type {Block[]} */
+      const content = partsToBlocks(msg.content, model, compat, ctx, where, false);
+      for (const call of msg.toolCalls ?? []) {
+        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, where, ctx) });
+      }
+      if (!content.length) throw invalid(`${where}: mensagem do assistente vazia (sem texto nem tool_calls)`, ctx);
+      out.push({ role: 'assistant', content });
+      return;
+    }
+    /** @type {Block[]} */
+    let blocks;
+    if (msg.role === 'tool') {
+      if (!msg.toolCallId) throw invalid(`${where}: mensagem tool precisa de toolCallId`, ctx);
+      blocks = [{ type: 'tool_result', tool_use_id: msg.toolCallId, content: toolResultContent(msg.content, model, compat, ctx, where) }];
+    } else if (msg.role === 'user') {
+      blocks = partsToBlocks(msg.content, model, compat, ctx, where, true);
+      if (!blocks.length) throw invalid(`${where}: mensagem do usuário vazia`, ctx);
+    } else {
+      throw invalid(`${where}: papel "${/** @type {any} */ (msg).role}" não suportado (use user, assistant ou tool)`, ctx);
+    }
+    // tool_result e user seguidos viram uma única mensagem user; tool_result vai antes do resto.
+    const last = out[out.length - 1];
+    if (last?.role === 'user') {
+      for (const b of blocks) {
+        if (b.type === 'tool_result') {
+          let at = 0;
+          while (at < last.content.length && last.content[at].type === 'tool_result') at++;
+          last.content.splice(at, 0, b);
+        } else last.content.push(b);
+      }
+    } else out.push({ role: 'user', content: blocks });
+  });
+  return out;
+}
+
+/** @param {{ id: string, name: string, arguments: string }} call @param {string} where @param {Ctx} ctx */
+function parseArguments(call, where, ctx) {
+  const raw = call.arguments;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return {};
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('não é um objeto');
+    return parsed;
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    throw invalid(`${where}: arguments do tool_call "${call.name}" (${call.id}) não é um objeto JSON válido — ${why}`, ctx);
+  }
+}
+
+/** @param {Message['content']} content @param {Model} model @param {ResolvedCompat} compat @param {Ctx} ctx @param {string} where */
+function toolResultContent(content, model, compat, ctx, where) {
+  if (typeof content === 'string') return content;
+  const blocks = partsToBlocks(content, model, compat, ctx, where, true);
+  // Só texto: string simples; com imagem: lista de blocos (a API aceita text e image).
+  if (blocks.every((b) => b.type === 'text')) return blocks.map((b) => b.text).join('\n');
+  return blocks.map(({ cache_control: _drop, ...b }) => b);
+}
+
+/**
+ * @param {string|Part[]} content @param {Model} model @param {ResolvedCompat} compat
+ * @param {Ctx} ctx @param {string} where @param {boolean} allowMedia
+ * @returns {Block[]}
+ */
+function partsToBlocks(content, model, compat, ctx, where, allowMedia) {
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
+  /** @type {Block[]} */
+  const out = [];
+  content.forEach((part, j) => {
+    const at = `${where}.content[${j}]`;
+    switch (part.type) {
+      case 'text':
+        if (part.text) out.push({ type: 'text', text: part.text, ...cacheField(part.cache, compat) });
+        return;
+      case 'audio':
+      case 'video':
+        throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: a Messages API da Anthropic não aceita ${part.type === 'audio' ? 'áudio' : 'vídeo'}`, ctx);
+      case 'image':
+        if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar imagem`, ctx);
+        out.push(imageBlock(part, model, ctx, at));
+        return;
+      default:
+        throw invalid(`${at}: tipo de parte "${/** @type {any} */ (part).type}" desconhecido`, ctx);
+    }
+  });
+  return out;
+}
+
+/** @param {Extract<Part, { type: 'image' }>} part @param {Model} model @param {Ctx} ctx @param {string} at @returns {Block} */
+function imageBlock(part, model, ctx, at) {
+  if (!model.input?.includes('image')) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: o modelo não declara entrada de imagem`, ctx);
+  }
+  const transport = model.transport?.image ?? ['data-url', 'url'];
+  const raw = part.data ?? part.url;
+  if (!raw) throw invalid(`${at}: imagem precisa de data ou url`, ctx);
+
+  // `data:` vindo em `url` conta como data-url.
+  if (part.data !== undefined || raw.startsWith('data:')) {
+    if (!transport.includes('data-url')) {
+      throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: o modelo não aceita imagem em data-url`, ctx);
+    }
+    const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(raw);
+    const mediaType = m?.[1] ?? part.mime;
+    const data = m ? m[3] : raw;
+    if (m && !m[2]) throw invalid(`${at}: data-url de imagem precisa ser base64`, ctx);
+    if (!mediaType) throw invalid(`${at}: imagem em base64 precisa de mime`, ctx);
+    return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+  }
+  if (!transport.includes('url')) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: o modelo só aceita imagem em data-url (baixar a URL é papel do cliente)`, ctx);
+  }
+  return { type: 'image', source: { type: 'url', url: raw } };
+}
+
+/** @param {string} message @param {Ctx} ctx */
+function invalid(message, ctx) {
+  return new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, message: `${ctx.provider}/${ctx.model}: ${message}` });
+}
+
+/** Status HTTP equivalente ao `error.type` de um erro dentro do stream. @param {unknown} type */
+function statusForErrorType(type) {
+  switch (type) {
+    case 'overloaded_error': return 529;
+    case 'rate_limit_error': return 429;
+    case 'invalid_request_error': return 400;
+    case 'authentication_error': return 401;
+    default: return 500;
+  }
+}
+
+/** Mapeia `stop_reason` para o vocabulário da lib; o que não conhecemos passa como veio. @param {string} reason */
+function mapStopReason(reason) {
+  if (reason === 'end_turn' || reason === 'stop_sequence') return 'stop';
+  if (reason === 'max_tokens') return 'length';
+  if (reason === 'tool_use') return 'tool_calls';
+  return reason;
+}
+
+/** @param {unknown} v */
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * Normaliza o usage combinado (message_start + message_delta).
+ * @param {Record<string, any>} raw @returns {Usage}
+ */
+function normalizeUsage(raw) {
+  const cc = raw.cache_creation;
+  const hasSplit = cc && typeof cc === 'object'
+    && (typeof cc.ephemeral_5m_input_tokens === 'number' || typeof cc.ephemeral_1h_input_tokens === 'number');
+  return {
+    input: num(raw.input_tokens),
+    output: num(raw.output_tokens),
+    cacheRead: num(raw.cache_read_input_tokens),
+    cacheWrite: hasSplit ? num(cc.ephemeral_5m_input_tokens) : num(raw.cache_creation_input_tokens),
+    cacheWrite1h: hasSplit ? num(cc.ephemeral_1h_input_tokens) : 0,
+    raw,
+  };
+}
+
+/**
+ * Lê o SSE da Messages API.
+ * @type {import('../types.js').ApiModule['parseStream']}
+ */
+export async function* parseStream(sseEvents, { account, model }) {
+  /** @type {Ctx} */
+  const ctx = { provider: account.provider, model: model.id };
+  /** @type {Record<string, any>} */
+  let usageRaw = {};
+  let stopReason = '';
+  let stopped = false;
+  /** @type {Map<number, { kind: string, id?: string, name?: string, json: string, initial?: unknown }>} */
+  const blocks = new Map();
+
+  for await (const sse of sseEvents) {
+    /** @type {Record<string, any>} */
+    let ev;
+    try {
+      ev = JSON.parse(sse.data);
+    } catch {
+      throw new ProviderError({ type: 'upstream', ...ctx, body: sse.data, message: `${ctx.provider}/${ctx.model}: evento SSE com JSON inválido` });
+    }
+    const type = ev?.type ?? sse.event;
+
+    switch (type) {
+      case 'ping':
+        break;
+      case 'message_start':
+        usageRaw = { ...usageRaw, ...(ev.message?.usage ?? {}) };
+        break;
+      case 'content_block_start': {
+        const b = ev.content_block ?? {};
+        const kind = b.type;
+        blocks.set(ev.index, { kind, id: b.id, name: b.name, json: '', initial: b.input });
+        if (kind === 'text' && b.text) yield { type: 'text', text: b.text };
+        else if (kind === 'thinking' && b.thinking) yield { type: 'reasoning', text: b.thinking };
+        break;
+      }
+      case 'content_block_delta': {
+        const d = ev.delta ?? {};
+        const blk = blocks.get(ev.index);
+        if (d.type === 'text_delta' && d.text) yield { type: 'text', text: d.text };
+        else if (d.type === 'thinking_delta' && d.thinking) yield { type: 'reasoning', text: d.thinking };
+        else if (d.type === 'input_json_delta' && blk) blk.json += d.partial_json ?? '';
+        // signature_delta e outros: não viram evento.
+        break;
+      }
+      case 'content_block_stop': {
+        const blk = blocks.get(ev.index);
+        blocks.delete(ev.index);
+        if (blk?.kind === 'tool_use') {
+          let args = blk.json.trim();
+          if (!args) {
+            const init = blk.initial;
+            args = init && typeof init === 'object' && Object.keys(init).length ? JSON.stringify(init) : '{}';
+          }
+          yield { type: 'tool_call', id: String(blk.id ?? ''), name: String(blk.name ?? ''), arguments: args };
+        }
+        break;
+      }
+      case 'message_delta': {
+        if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+        const u = ev.usage ?? {};
+        usageRaw = {
+          ...usageRaw,
+          ...Object.fromEntries(Object.entries(u).filter(([, v]) => v !== null && v !== undefined)),
+        };
+        break;
+      }
+      case 'message_stop':
+        stopped = true;
+        break;
+      case 'error': {
+        const err = ev.error ?? {};
+        throw errorFromStatus(statusForErrorType(err.type), {
+          ...ctx,
+          body: sse.data,
+          message: [err.type, err.message].filter(Boolean).join(': ') || undefined,
+        });
+      }
+      default:
+        break; // tipos novos que a Anthropic acrescentar: ignorados de propósito
+    }
+    if (stopped) break;
+  }
+
+  if (!stopped) {
+    throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem message_stop (resposta cortada)` });
+  }
+  return {
+    finishReason: stopReason ? mapStopReason(stopReason) : 'stop',
+    usage: normalizeUsage(usageRaw),
+    reportedCostUsd: null,
+  };
+}
