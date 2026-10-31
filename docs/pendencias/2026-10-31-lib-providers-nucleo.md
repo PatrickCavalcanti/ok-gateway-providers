@@ -14,5 +14,4 @@
 | custo | A migração de preços do Gateway precisa escrever explícitos os padrões de cache (10 %, 125 %, 200 %) e decidir o que cobrar sem preço (`FALLBACK_COST` → aqui é `usd: null`) | T2.1 |
 | custo | `usage.missing` precisa de tratamento no Gateway (não cobrar zero em silêncio) | T2.2 |
 | anexos | Arquivo por URL no OpenRouter (`file_data` com URL) não confirmado: o padrão é só data-url; ligar `transport.file: ['data-url','url']` depois de provar no smoke | smoke |
-| anexos | Smoke não tem caso de PDF ainda; acrescentar com um PDF pequeno real | smoke |
 | compat | `effort` com `reasoningFormat: 'none'` é ignorado sem erro; o Igris (D6) recusa — decidir se vira `unsupported` | E4 |
