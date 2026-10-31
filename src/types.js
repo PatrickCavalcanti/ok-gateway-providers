@@ -51,11 +51,12 @@
  */
 
 /**
- * Faixa de preço: vale quando o prompt total passa de `aboveInputTokens`.
+ * Faixa de preço: vale quando o prompt total passa de `aboveInputTokens`. Taxa que a
+ * faixa não declara fica a base (spec §15.3).
  * @typedef {object} CostTier
  * @property {number} aboveInputTokens
- * @property {number} input
- * @property {number} output
+ * @property {number} [input]
+ * @property {number} [output]
  * @property {number} [cacheRead]
  * @property {number} [cacheWrite]
  * @property {number} [cacheWrite1h]

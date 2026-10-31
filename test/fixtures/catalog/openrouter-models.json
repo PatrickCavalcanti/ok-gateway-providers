@@ -1,0 +1,185 @@
+{
+  "data": [
+    {
+      "id": "openai/gpt-x-mini",
+      "canonical_slug": "openai/gpt-x-mini-2026-09-01",
+      "name": "OpenAI: GPT-X Mini",
+      "created": 1788220800,
+      "description": "Modelo pequeno de texto com saída estruturada por gramática.",
+      "context_length": 400000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+        "request": "0",
+        "image": "0",
+        "web_search": "0",
+        "internal_reasoning": "0",
+        "input_cache_read": "0.00000003",
+        "input_cache_write": "0.000000375"
+      },
+      "top_provider": { "context_length": 400000, "max_completion_tokens": 128000, "is_moderated": true },
+      "per_request_limits": null,
+      "supported_parameters": ["max_tokens", "temperature", "top_p", "tools", "tool_choice", "response_format", "structured_outputs", "reasoning", "include_reasoning"],
+      "default_parameters": { "temperature": 1, "top_p": null }
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "canonical_slug": "qwen/qwen3.7-flash",
+      "name": "Qwen: Qwen3.7 Flash",
+      "created": 1787011200,
+      "description": "Modelo rápido; aceita response_format mas não structured_outputs.",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Qwen",
+        "instruct_type": null
+      },
+      "pricing": { "prompt": "0.00000005", "completion": "0.0000004" },
+      "top_provider": { "context_length": 262144, "max_completion_tokens": null, "is_moderated": false },
+      "per_request_limits": null,
+      "supported_parameters": ["max_tokens", "temperature", "top_p", "tools", "response_format", "include_reasoning"],
+      "default_parameters": null
+    },
+    {
+      "id": "google/gemini-x-multi",
+      "canonical_slug": "google/gemini-x-multi",
+      "name": "Google: Gemini X Multi",
+      "created": 1786406400,
+      "description": "Entende todas as mídias de entrada.",
+      "context_length": 1048576,
+      "architecture": {
+        "modality": "text+image+file+audio+video->text",
+        "input_modalities": ["video", "audio", "file", "image", "text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Gemini",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000004",
+        "audio": "0.000002",
+        "input_cache_read": "0.0000001"
+      },
+      "top_provider": { "context_length": 1048576, "max_completion_tokens": 65536, "is_moderated": false },
+      "per_request_limits": null,
+      "supported_parameters": ["max_tokens", "tools", "reasoning", "structured_outputs", "response_format"],
+      "default_parameters": null
+    },
+    {
+      "id": "google/gemini-x-image",
+      "canonical_slug": "google/gemini-x-image",
+      "name": "Google: Gemini X Image",
+      "created": 1786492800,
+      "description": "Gera imagens a partir de texto e imagem.",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text+image->text+image",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["image", "text"],
+        "tokenizer": "Gemini",
+        "instruct_type": null
+      },
+      "pricing": { "prompt": "0.0000003", "completion": "0.0000025", "image": "0.0000300" },
+      "top_provider": { "context_length": 32768, "max_completion_tokens": 8192, "is_moderated": false },
+      "per_request_limits": null,
+      "supported_parameters": ["max_tokens", "temperature", "response_format"],
+      "default_parameters": null
+    },
+    {
+      "id": "openai/text-embedding-x",
+      "canonical_slug": "openai/text-embedding-x",
+      "name": "OpenAI: Text Embedding X",
+      "created": 1785801600,
+      "description": "Embeddings (item do /api/v1/embeddings/models, mesmo formato).",
+      "context_length": 8192,
+      "architecture": {
+        "modality": "text->embeddings",
+        "input_modalities": ["text"],
+        "output_modalities": ["embeddings"],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": { "prompt": "0.00000002", "completion": "0" },
+      "top_provider": { "context_length": 8192, "max_completion_tokens": null, "is_moderated": false },
+      "per_request_limits": null,
+      "supported_parameters": []
+    },
+    {
+      "id": "meta-llama/llama-x-8b:free",
+      "canonical_slug": "meta-llama/llama-x-8b",
+      "name": "Meta: Llama X 8B (free)",
+      "created": 1785196800,
+      "description": "Variante gratuita.",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "tokenizer": "Llama3",
+        "instruct_type": "llama3"
+      },
+      "pricing": { "prompt": "0", "completion": "0", "request": "0", "image": "0" },
+      "top_provider": { "context_length": 131072, "max_completion_tokens": 4096, "is_moderated": false },
+      "per_request_limits": null,
+      "supported_parameters": ["max_tokens", "temperature", "top_p"],
+      "default_parameters": null
+    },
+    {
+      "id": "openrouter/auto",
+      "canonical_slug": "openrouter/auto",
+      "name": "Auto Router",
+      "created": 1699401600,
+      "description": "Roteia para o modelo mais adequado; o preço depende de quem atende.",
+      "context_length": 2000000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "tokenizer": "Router",
+        "instruct_type": null
+      },
+      "pricing": { "prompt": "-1", "completion": "-1" },
+      "top_provider": { "context_length": null, "max_completion_tokens": null, "is_moderated": false },
+      "per_request_limits": null,
+      "supported_parameters": ["max_tokens", "temperature", "tools"],
+      "default_parameters": null
+    },
+    {
+      "id": "anthropic/claude-haiku-5-5",
+      "canonical_slug": "anthropic/claude-haiku-5-5",
+      "name": "Anthropic: Claude Haiku 5.5",
+      "context_length": 200000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "tokenizer": "Claude",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000005",
+        "input_cache_read": "0.00000001",
+        "input_cache_write": "0.000000125"
+      },
+      "top_provider": { "context_length": 200000, "max_completion_tokens": 64000, "is_moderated": false },
+      "supported_parameters": ["max_tokens", "temperature", "tools", "reasoning"],
+      "gateway": { "provider": "anthropic", "available": true, "credits": { "input": 0.55, "output": 2.75 } }
+    },
+    {
+      "name": "Item sem id (deve ser ignorado)",
+      "context_length": 1000,
+      "architecture": { "input_modalities": ["text"], "output_modalities": ["text"] },
+      "pricing": { "prompt": "0.000001", "completion": "0.000002" }
+    }
+  ]
+}

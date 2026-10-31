@@ -25,8 +25,8 @@ export function createCreditConverter({ creditsPerUsd, rounding = 'round', decim
       if (typeof usd !== 'number' || !Number.isFinite(usd)) return null;
       const credits = usd * creditsPerUsd;
       if (rounding === 'none') return credits;
-      // toPrecision tira o ruído de ponto flutuante antes do teto (0.1 × 5500 = 550.0000000000001).
-      const scaled = Number((credits * factor).toPrecision(12));
+      // toPrecision(15) tira o ruído de ponto flutuante antes do teto (0.1 × 5500 = 550.0000000000001).
+      const scaled = Number((credits * factor).toPrecision(15));
       return (rounding === 'ceil' ? Math.ceil(scaled) : Math.round(scaled)) / factor;
     },
   };
