@@ -6,7 +6,7 @@
   "license": "MIT",
   "author": "Patrick Cavalcanti",
   "repository": { "type": "git", "url": "git+https://github.com/PatrickCavalcanti/ok-gateway-providers.git" },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=20.14" },
   "main": "./src/index.js",
   "types": "./types/index.d.ts",
   "exports": {

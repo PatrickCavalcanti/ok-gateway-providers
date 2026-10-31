@@ -168,11 +168,42 @@ test('abort do chamador: aborted, retryOther false', async () => {
   await assert.rejects(run.result, (e) => e instanceof ProviderError && e.type === 'aborted' && e.retryOther === false);
 });
 
-test('signal já abortado não chama o fetch', async () => {
+test('signal já abortado não chama o fetch nem a chave', async () => {
   const c = new AbortController(); c.abort();
+  let keyCalls = 0;
+  const acc = { ...account, apiKey: () => { keyCalls++; return 'k'; } };
   const f = fakeFetch(() => new Response(sse([])));
-  const run = createClient({ account, model, fetch: f }).chat({ messages: msgs, signal: c.signal });
+  const run = createClient({ account: acc, model, fetch: f }).chat({ messages: msgs, signal: c.signal });
   await assert.rejects(run.result, (e) => e instanceof ProviderError && e.type === 'aborted');
+  assert.equal(f.calls.length, 0);
+  assert.equal(keyCalls, 0);
+});
+
+test('falha ao obter a chave é auth, não rede', async () => {
+  const acc = { ...account, apiKey: async () => { throw new Error('firebase fora'); } };
+  const f = fakeFetch(() => new Response(sse([])));
+  const run = createClient({ account: acc, model, fetch: f }).chat({ messages: msgs });
+  await assert.rejects(run.result, (e) => e instanceof ProviderError && e.type === 'auth' && /firebase fora/.test(e.message));
+  assert.equal(f.calls.length, 0);
+});
+
+test('erro não tipado no buildRequest é invalid_request sem tentar outro', async () => {
+  registerApi(/** @type {any} */ ({ ...fake, api: 'fake-quebrado', buildRequest() { throw new TypeError('x is undefined'); } }));
+  const f = fakeFetch(() => new Response(sse([])));
+  const run = createClient({ account: { ...account, api: 'fake-quebrado' }, model, fetch: f }).chat({ messages: msgs });
+  await assert.rejects(run.result, (e) => e instanceof ProviderError && e.type === 'invalid_request' && e.retryOther === false);
+  assert.equal(f.calls.length, 0);
+});
+
+test('headers: modelo sobrescreve conta; os do fio não se sobrescrevem', async () => {
+  const acc = { ...account, headers: { 'x-a': 'conta', authorization: 'tentativa' }, compat: { headers: { 'x-b': 'conta' } } };
+  const mod = { ...model, compat: { headers: { 'x-a': 'modelo', 'x-b': 'modelo' } } };
+  const f = fakeFetch(() => new Response(sse(['data: a\n\n'])));
+  await createClient({ account: acc, model: mod, fetch: f }).chat({ messages: msgs }).result;
+  const h = f.calls[0].init.headers;
+  assert.equal(h['x-a'], 'modelo');
+  assert.equal(h['x-b'], 'modelo');
+  assert.equal(h.authorization, 'Bearer k1');
 });
 
 test('sair do for await cancela o pedido', async () => {

@@ -133,6 +133,15 @@ export function parseOpenRouterModel(item) {
   if (reasoning) compat.reasoningFormat = 'reasoning_object';
   model.compat = compat;
 
+  // Transporte de mídia como o OpenRouter aceita no Chat Completions: vídeo por
+  // `video_url` (url ou data-url) e áudio por `input_audio`. Sem isso, vídeo de um modelo
+  // do catálogo daria `unsupported` sempre (o anexo não adivinha transporte de vídeo).
+  /** @type {import('../types.js').Transport} */
+  const transport = {};
+  if (inputList.includes('video')) transport.video = 'video_url';
+  if (inputList.includes('audio')) transport.audio = 'input_audio';
+  if (Object.keys(transport).length) model.transport = transport;
+
   if (Object.keys(meta).length) model.meta = meta;
   return model;
 }

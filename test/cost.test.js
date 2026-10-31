@@ -192,3 +192,10 @@ test('valor negativo não derruba o prompt abaixo do limite da faixa', () => {
   const r = computeCost(HAIKU, usage({ input: -1000, cacheRead: 100_001 }));
   close(r.usd, 100_001 * 0.05 / 1e6);
 });
+
+test('uso não declarado não vira US$ 0 (C1)', () => {
+  const r = computeCost({ cost: { input: 1, output: 2 } }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, missing: true });
+  assert.deepEqual(r, { usd: null, source: 'none' });
+  // o custo do provedor ainda vence
+  assert.deepEqual(computeCost({ cost: { input: 1, output: 2 } }, { missing: true }, 0.01), { usd: 0.01, source: 'provider' });
+});

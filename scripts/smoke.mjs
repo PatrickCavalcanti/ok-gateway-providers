@@ -44,6 +44,8 @@ if (process.env.ANTHROPIC_API_KEY) {
     model: {
       id: process.env.SMOKE_ANTHROPIC_MODEL || 'claude-haiku-5-5',
       operations: ['chat'], input: ['text', 'image'], output: ['text'],
+      // A geração 5 pensa por padrão e recusa temperature.
+      compat: { thinkingByDefault: true, supportsTemperature: false },
       cost: { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125, cacheWrite1h: 0.20 },
     },
   });
@@ -54,7 +56,7 @@ if (process.env.ANTHROPIC_API_KEY) {
 const cases = [
   {
     name: 'texto',
-    request: { messages: [{ role: 'user', content: 'Responda só com a palavra: pronto' }], maxTokens: 50 },
+    request: { messages: [{ role: 'user', content: 'Responda só com a palavra: pronto' }], maxTokens: 2000 },
     /** @param {any} r */ check: (r) => /pronto/i.test(r.text),
   },
   {
@@ -62,7 +64,7 @@ const cases = [
     request: {
       messages: [{ role: 'user', content: 'Qual a temperatura em Campo Grande? Use a ferramenta.' }],
       tools: [{ name: 'get_weather', description: 'Temperatura atual de uma cidade', parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] } }],
-      maxTokens: 200,
+      maxTokens: 2000,
     },
     /** @param {any} r */ check: (r) => r.toolCalls.length > 0 && typeof JSON.parse(r.toolCalls[0].arguments).city === 'string',
   },
@@ -70,7 +72,7 @@ const cases = [
     name: 'imagem',
     request: {
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Qual a cor desta imagem? Uma palavra.' }, { type: 'image', data: RED_PNG, mime: 'image/png' }] }],
-      maxTokens: 50,
+      maxTokens: 2000,
     },
     /** @param {any} r */ check: (r) => /vermelh|red/i.test(r.text),
   },

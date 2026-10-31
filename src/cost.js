@@ -34,6 +34,8 @@ export function computeCost(model, usage, reportedUsd) {
   if (typeof reportedUsd === 'number' && Number.isFinite(reportedUsd) && reportedUsd >= 0) {
     return { usd: reportedUsd, source: 'provider' };
   }
+  // Uso não declarado não é uso zero: sem ele, não há como calcular (spec §9).
+  if (usage?.missing) return { usd: null, source: 'none' };
   const cost = model?.cost;
   if (!cost || typeof cost.input !== 'number' || typeof cost.output !== 'number') return { usd: null, source: 'none' };
 

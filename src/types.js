@@ -131,6 +131,8 @@
  * @property {number} cacheWrite1h
  * @property {number} [reasoning]
  * @property {number} [audioSeconds]
+ * @property {boolean} [missing]  true quando o provedor não declarou uso nenhum: o custo
+ *   pela tabela vira `{ usd: null, source: 'none' }`, nunca US$ 0
  * @property {unknown} [raw]
  */
 

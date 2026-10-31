@@ -161,3 +161,10 @@ test('todo modelo do catálogo sai com operations/input/output não vazios e pas
     assert.ok(m.output.length >= 1, m.id);
   }
 });
+
+test('catálogo declara o transporte de vídeo e áudio do OpenRouter', () => {
+  const [m] = parseOpenRouterModels({ data: [{ id: 'g/v', architecture: { input_modalities: ['text', 'video', 'audio'], output_modalities: ['text'] }, pricing: { prompt: '0', completion: '0' } }] });
+  assert.deepEqual(m.transport, { video: 'video_url', audio: 'input_audio' });
+  const [t] = parseOpenRouterModels({ data: [{ id: 'g/t', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, pricing: { prompt: '0', completion: '0' } }] });
+  assert.equal(t.transport, undefined);
+});

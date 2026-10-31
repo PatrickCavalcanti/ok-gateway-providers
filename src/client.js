@@ -87,9 +87,30 @@ function startChat({ account, model, request, doFetch }) {
       }
 
       const compat = resolveCompat(account, model);
-      const apiKey = typeof account.apiKey === 'function' ? await account.apiKey() : account.apiKey;
-      const built = api.buildRequest({ account, model, compat, request, apiKey: apiKey ?? '' });
-      const headers = { ...compat.headers, ...(account.headers ?? {}), ...built.headers };
+      if (local.signal.aborted) throw fromFailure(new Error('aborted'), 'aborted', ctx, false);
+
+      /** @type {string|undefined} */
+      let apiKey;
+      try {
+        apiKey = typeof account.apiKey === 'function' ? await account.apiKey() : account.apiKey;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ProviderError({ type: 'auth', ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: não foi possível obter a chave da conta — ${msg}` });
+      }
+
+      /** @type {ReturnType<ApiModule['buildRequest']>} */
+      let built;
+      try {
+        built = api.buildRequest({ account, model, compat, request, apiKey: apiKey ?? '' });
+      } catch (err) {
+        if (err instanceof ProviderError) throw err;
+        // Erro que não é tipado ao montar o pedido = pedido malformado: outro alvo não resolve.
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: pedido malformado — ${msg}` });
+      }
+      // Ordem: headers fixos da conta ← compat (conta ← modelo) ← os do fio (auth, content-type), que não se sobrescrevem.
+      const headers = { ...(account.headers ?? {}), ...compat.headers, ...built.headers };
+      if (local.signal.aborted) throw fromFailure(new Error('aborted'), 'aborted', ctx, false);
 
       /** @type {Response} */
       let res;
