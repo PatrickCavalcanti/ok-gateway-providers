@@ -1,9 +1,6 @@
 // ok-gateway-providers — typedefs JSDoc compartilhados (spec §4–§5).
 // Este módulo não tem código de runtime; existe para os `import('./types.js')` dos outros.
 
-/** @typedef {import('./vocabulary.js').Operation} Operation */
-/** @typedef {import('./vocabulary.js').InputModality} InputModality */
-/** @typedef {import('./vocabulary.js').OutputModality} OutputModality */
 /** @typedef {import('./timeouts.js').Timeouts} Timeouts */
 
 /** @typedef {'openai-completions'|'anthropic-messages'|'openai-responses'|'google-generative-ai'} Api */
@@ -73,9 +70,9 @@
  * @typedef {object} Model
  * @property {string} id
  * @property {string} [name]
- * @property {Operation[]} operations
- * @property {InputModality[]} input
- * @property {OutputModality[]} output
+ * @property {import('./vocabulary.js').Operation[]} operations
+ * @property {import('./vocabulary.js').InputModality[]} input
+ * @property {import('./vocabulary.js').OutputModality[]} output
  * @property {boolean} [reasoning]
  * @property {number} [contextWindow]
  * @property {number} [maxTokens]

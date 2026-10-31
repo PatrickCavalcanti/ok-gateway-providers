@@ -8,6 +8,8 @@ registerApi(openaiCompletions);
 registerApi(anthropicMessages);
 
 export { createClient, registerApi, getApi, listApis } from './client.js';
+/** Tipos públicos (Account, Model, ChatRequest, ChatEvent, Usage, Cost…). */
+export * from './types.js';
 export * from './vocabulary.js';
 export { ProviderError, errorFromStatus, unsupported, typeFromStatus, truncateBody, MAX_BODY_BYTES } from './errors.js';
 export { createDeadline, DEFAULT_TIMEOUTS } from './timeouts.js';
