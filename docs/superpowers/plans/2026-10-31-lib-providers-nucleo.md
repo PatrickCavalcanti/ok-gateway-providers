@@ -117,21 +117,21 @@ Valida o modelo contra o pedido **antes** do fetch: `model.operations` sem `chat
 
 ## Fase 1 — infraestrutura e contratos (controller, sequencial)
 
-- [ ] **T1.1 Esqueleto do repositório:** `package.json` (`name ok-gateway-providers`,
+- [x] **T1.1 Esqueleto do repositório:** `package.json` (`name ok-gateway-providers`,
   `type module`, `engines node>=20`, `exports`/`types` para `types/index.d.ts`, scripts
   `test`, `typecheck`, `build:types`), `tsconfig.json` (`checkJs`, `strict`, `noEmit`),
   `tsconfig.types.json` (declaração em `types/`), `LICENSE` MIT, `.gitignore`,
   `README.md` provisório, `CHANGELOG.md`, `.github/workflows/ci.yml` (Node 20 e 22,
   `npm ci`, `npm test`, `npm run typecheck`).
-- [ ] **T1.2 `vocabulary.js` + teste:** `OPERATIONS`, `INPUT_MODALITIES`,
+- [x] **T1.2 `vocabulary.js` + teste:** `OPERATIONS`, `INPUT_MODALITIES`,
   `OUTPUT_MODALITIES`, `METHODS_BY_OPERATION`, `formatShape`, `parseShape`, `shapeOf`,
   `normalizeRequest`, `requestKey`, `parseRequestKey`, `ineligibilityReason`
   (`missing_operation` · `missing_input` · `missing_output`), `isEligible`,
   `VocabularyError` (`code 'InvalidVocabulary'`). Casos portados de
   `igris/packages/providers/test/vocabulario.test.js` (sem os de capability legada).
-- [ ] **T1.3 `types.js`, `errors.js`, `timeouts.js`, `sse.js`, `compat.js`, `cost.js`,
+- [x] **T1.3 `types.js`, `errors.js`, `timeouts.js`, `sse.js`, `compat.js`, `cost.js`,
   `credits.js` + testes** (os de `cost`/`credits` ficam com a T2.3).
-- [ ] **T1.4 `client.js` e `index.js`** com um fio de teste (fake) nos testes do cliente:
+- [x] **T1.4 `client.js` e `index.js`** com um fio de teste (fake) nos testes do cliente:
   fila de eventos, `result`, `emitted`, timeouts, abort, status HTTP → erro, validação de
   operação, `apiKey` função.
 
@@ -139,7 +139,7 @@ Verificação: `npm test` e `npm run typecheck` verdes. Commit + push.
 
 ## Fase 2 — fios, custo e catálogo (subagentes, paralelo — arquivos disjuntos)
 
-- [ ] **T2.1 `attachments.js` + `apis/openai-completions.js` + testes** (Sonnet).
+- [x] **T2.1 `attachments.js` + `apis/openai-completions.js` + testes** (Sonnet).
   Partes por transporte (`data-url`/`url` para imagem, `input_audio`, `input_video` /
   `video_url`); `unsupported` antes do fetch quando a `input` do modelo ou o transporte
   não cobre. Corpo: `messages` (system como `system`, ou `developer` com
@@ -153,7 +153,7 @@ Verificação: `npm test` e `npm run typecheck` verdes. Commit + push.
   Uso: `prompt_tokens - cached_tokens - cache_write_tokens`, `cached_tokens`, `usage.cost`.
   Fixtures SSE em `test/fixtures/openai-completions/`. Matriz de compat:
   `test/openai-completions.compat.test.js`.
-- [ ] **T2.2 `apis/anthropic-messages.js` + testes** (Sonnet). `system` em blocos com
+- [x] **T2.2 `apis/anthropic-messages.js` + testes** (Sonnet). `system` em blocos com
   `cache_control` (ttl `1h` quando pedido), `tool_use`/`tool_result` (papel `tool` vira
   `tool_result` numa mensagem `user`; mensagens `tool` seguidas se juntam), imagem
   `source base64|url`, áudio/vídeo `unsupported`, `thinking` `adaptive`/`disabled` +
@@ -164,7 +164,7 @@ Verificação: `npm test` e `npm run typecheck` verdes. Commit + push.
   (stop_reason, usage), `error`. Uso: `cache_read_input_tokens`,
   `cache_creation.ephemeral_5m/1h_input_tokens` (ou `cache_creation_input_tokens` como
   5 min). Fixtures em `test/fixtures/anthropic-messages/`.
-- [ ] **T2.3 testes de `cost.js` e `credits.js`, e `catalog/openrouter.js` + testes**
+- [x] **T2.3 testes de `cost.js` e `credits.js`, e `catalog/openrouter.js` + testes**
   (Sonnet). *Ajuste na execução:* `cost.js` e `credits.js` entraram na Fase 1, porque o
   `client.js` depende do `computeCost`; a T2.3 escreve os testes deles.
   Regras da spec §9–§10 e §15 itens 3, 4 e 6. Conferir os números contra
@@ -183,19 +183,19 @@ Revisão de fase (subagente Sonnet, spec + qualidade). Commit + push.
 
 ## Fase 3 — scripts, tipos e documentação (controller)
 
-- [ ] **T3.1 `scripts/record-fixture.mjs`** (chave do ambiente; remove headers e chaves
+- [x] **T3.1 `scripts/record-fixture.mjs`** (chave do ambiente; remove headers e chaves
   antes de salvar) e **`scripts/smoke.mjs`** (texto, tool call e imagem contra
   OpenRouter e Anthropic; pula provedor sem chave e diz isso).
-- [ ] **T3.2 `npm run build:types`** gera `types/`, que entra no commit.
-- [ ] **T3.3 README** com conta, modelo, chat, eventos, custo, créditos, erros e
+- [x] **T3.2 `npm run build:types`** gera `types/`, que entra no commit.
+- [x] **T3.3 README** com conta, modelo, chat, eventos, custo, créditos, erros e
   instalação pelo tarball; `CHANGELOG` com a `0.1.0`.
 
 ## Entrega
 
-- [ ] Revisão do conjunto (Opus) contra a spec, com as oito formas do
+- [x] Revisão do conjunto (Opus) contra a spec, com as oito formas do
   `dev-process` aplicáveis (o que a spec pede e não está; o que está e a spec não pede;
   erro silencioso; contrato inventado; teste que passa pelo caminho errado; tipo frouxo;
   segredo em fixture; divergência de nome). Corrigir e re-rodar até limpo.
-- [ ] `npm test` + `npm run typecheck` verdes. Push.
+- [x] `npm test` + `npm run typecheck` verdes. Push.
 - [ ] Fica com o dono: `scripts/smoke.mjs` com as chaves, tag `v0.1.0`, e decidir o
   branch padrão do repositório (o primeiro push foi o deste branch).
