@@ -37,9 +37,11 @@ test('baseUrl com barras no fim e chave vazia (sem Authorization)', () => {
   assert.equal('Authorization' in headers, false);
 });
 
-test('maxTokensField: max_completion_tokens / max_output_tokens; modelo é o padrão e a chamada vence', () => {
-  let { body } = build({ account: { compat: { maxTokensField: 'max_completion_tokens' } }, model: { maxTokens: 4096 } });
-  assert.equal(body.max_completion_tokens, 4096);
+test('maxTokensField: max_completion_tokens / max_output_tokens; só o que o pedido traz, nunca o teto do modelo', () => {
+  let { body } = build({ account: { compat: { maxTokensField: 'max_completion_tokens' } }, model: { maxTokens: 4096 }, request: { maxTokens: 77 } });
+  assert.equal(body.max_completion_tokens, 77);
+  assert.equal('max_tokens' in body, false);
+  ({ body } = build({ model: { maxTokens: 4096 } }));
   assert.equal('max_tokens' in body, false);
   ({ body } = build({ model: { compat: { maxTokensField: 'max_output_tokens' } }, request: { maxTokens: 50 } }));
   assert.equal(body.max_output_tokens, 50);
@@ -125,9 +127,53 @@ test('cacheMarker cache_control marca system e partes de texto; none não leva a
     { type: 'text', text: 'pergunta' },
   ]);
   const off = build({ request }).body.messages;
-  assert.equal(off[0].content, 'regras\n\ntom');
+  assert.equal(off[0].content, 'regrastom'); // sem separador: o texto original do chamador
   assert.equal(JSON.stringify(off).includes('cache_control'), false);
+  assert.equal(off[1].content, 'contextopergunta'); // só texto e sem marca: string
 });
+
+test('cacheMarker prompt_cache_breakpoint marca system, user e tool', () => {
+  const request = {
+    system: [{ text: 'regras', cache: {} }, { text: 'tom' }],
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'contexto', cache: { ttl: '1h' } }, { type: 'text', text: 'pergunta' }] },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'f', arguments: '{}' }] },
+      { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'resultado', cache: {} }] },
+      { role: 'tool', toolCallId: 'c2', content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] },
+    ],
+  };
+  const m = build({ account: { compat: { cacheMarker: 'prompt_cache_breakpoint' } }, request }).body.messages;
+  const bp = { prompt_cache_breakpoint: { mode: 'explicit' } };
+  assert.deepEqual(m[0].content, [{ type: 'text', text: 'regras', ...bp }, { type: 'text', text: 'tom' }]);
+  assert.deepEqual(m[1].content, [{ type: 'text', text: 'contexto', ...bp }, { type: 'text', text: 'pergunta' }]);
+  assert.deepEqual(m[3].content, [{ type: 'text', text: 'resultado', ...bp }]);
+  assert.equal(m[4].content, 'ab'); // sem marca, continua string
+  assert.equal(JSON.stringify(m).includes('cache_control'), false);
+});
+
+test('cacheMarker cache_control também marca mensagem tool; none descarta a marca', () => {
+  const request = { messages: [{ role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'r', cache: {} }] }] };
+  assert.deepEqual(build({ account: { compat: { cacheMarker: 'cache_control' } }, request }).body.messages[0].content, [{ type: 'text', text: 'r', cache_control: { type: 'ephemeral' } }]);
+  assert.equal(build({ request }).body.messages[0].content, 'r');
+});
+
+test('user só com texto e sem marcas vai como string; com mídia segue lista', () => {
+  const text = [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }];
+  assert.equal(build({ request: { messages: [{ role: 'user', content: text }] } }).body.messages[0].content, 'ab');
+  const img = { type: 'image', data: 'QUJD', mime: 'image/png' };
+  const out = build({ model: { input: ['text', 'image'] }, request: { messages: [{ role: 'user', content: [text[0], img] }] } }).body.messages[0].content;
+  assert.equal(Array.isArray(out), true);
+});
+
+test('providerRouting + responseSchema: require_parameters mesclado em provider', () => {
+  const request = { responseSchema: { schema } };
+  const account = { compat: { providerRouting: true, structuredOutput: 'response_format' } };
+  assert.deepEqual(build({ account, request }).body.provider, { require_parameters: true });
+  assert.deepEqual(build({ account, request: { ...request, params: { provider: { order: ['x'] } } } }).body.provider, { order: ['x'], require_parameters: true });
+  assert.equal('provider' in build({ account, request: hello0() }).body, false); // sem schema, nada
+  assert.equal('provider' in build({ account: { compat: { structuredOutput: 'response_format' } }, request }).body, false); // sem providerRouting
+});
+function hello0() { return {}; }
 
 test('params: modelo, depois a chamada; chaves do fio ficam protegidas', () => {
   const { body } = build({

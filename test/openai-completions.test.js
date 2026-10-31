@@ -102,6 +102,58 @@ test('sem tabela e sem custo do provedor: usd null, nunca inventado', async () =
   assert.deepEqual(cost, { usd: null, source: 'none' });
 });
 
+test('stream sem nenhum usage: uso zerado e missing, custo null (nunca US$ 0 pela tabela)', async () => {
+  const f = fakeFetch({ sse: fixture('no-usage.sse') });
+  const client = createClient({ account: account(), model: model({ cost: { input: 2, output: 4 } }), fetch: f });
+  const events = await collect(client.chat(hello));
+  const end = events.at(-1);
+  assert.equal(end.usage.missing, true);
+  assert.equal(end.usage.raw, null);
+  assert.equal(end.usage.input + end.usage.output, 0);
+  assert.deepEqual(end.cost, { usd: null, source: 'none' });
+});
+
+test('uso em x_groq.usage (Groq em stream) é lido quando não vem usage', async () => {
+  const sse = 'data: {"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":"stop"}]}\n\n'
+    + 'data: {"choices":[],"x_groq":{"id":"r","usage":{"prompt_tokens":1000000,"completion_tokens":500000}}}\n\n'
+    + 'data: [DONE]\n\n';
+  const client = createClient({ account: account(), model: model({ cost: { input: 2, output: 4 } }), fetch: fakeFetch({ sse }) });
+  const end = (await collect(client.chat(hello))).at(-1);
+  assert.equal(end.usage.missing, undefined);
+  assert.equal(end.usage.input, 1_000_000);
+  assert.deepEqual(end.cost, { usd: 4, source: 'table' });
+});
+
+test('tool call cortada (finish length ou JSON incompleto) vira upstream, não argumentos inválidos', async () => {
+  const chunk = (delta, finish = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const start = { tool_calls: [{ index: 0, id: 'c1', function: { name: 'f', arguments: '{"a":' } }] };
+  for (const sse of [chunk(start, 'length') + 'data: [DONE]\n\n', chunk(start, 'tool_calls') + 'data: [DONE]\n\n', chunk(start) + 'data: [DONE]\n\n']) {
+    const client = createClient({ account: account(), model: model(), fetch: fakeFetch({ sse }) });
+    const events = [];
+    let err;
+    try { for await (const ev of client.chat(hello)) events.push(ev); } catch (e) { err = e; }
+    assert.equal(err.type, 'upstream');
+    assert.match(err.message, /tool call cortada/);
+    assert.equal(events.some((e) => e.type === 'tool_call'), false);
+  }
+});
+
+test('só [DONE] com tool calls e sem finish_reason: tool_calls; sem tool calls: stop', async () => {
+  const withCall = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'f', arguments: '{}' } }] } }] })}\n\ndata: [DONE]\n\n`;
+  let client = createClient({ account: account(), model: model(), fetch: fakeFetch({ sse: withCall }) });
+  assert.equal((await client.chat(hello).result).finishReason, 'tool_calls');
+  client = createClient({ account: account(), model: model(), fetch: fakeFetch({ sse: 'data: {"choices":[{"delta":{"content":"x"}}]}\n\ndata: [DONE]\n\n' }) });
+  assert.equal((await client.chat(hello).result).finishReason, 'stop');
+});
+
+test('raciocínio: reasoning vazio não engole reasoning_content', async () => {
+  const sse = 'data: {"choices":[{"delta":{"reasoning":"","reasoning_content":"pensando"}}]}\n\n'
+    + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+  const client = createClient({ account: account(), model: model({ reasoning: true }), fetch: fakeFetch({ sse }) });
+  const events = await collect(client.chat(hello));
+  assert.deepEqual(events.filter((e) => e.type === 'reasoning'), [{ type: 'reasoning', text: 'pensando' }]);
+});
+
 test('tool call fragmentada: acumulada por index e emitida completa no fim', async () => {
   const f = fakeFetch({ sse: fixture('tool-call.sse') });
   const client = createClient({ account: account(), model: model(), fetch: f });

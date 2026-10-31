@@ -17,9 +17,20 @@ export function assertMediaSupported(part: Part, model: Pick<Model, "id" | "inpu
     provider?: string;
 }): void;
 /**
+ * Campos de marca de cache de um bloco de texto, conforme o `cacheMarker` do compat.
+ * Vazio quando não há marca pedida ou o compat não a aceita.
+ * @param {{ ttl?: string }|undefined} cache
+ * @param {string|undefined} cacheMarker
+ * @returns {Record<string, unknown>}
+ */
+export function cacheFields(cache: {
+    ttl?: string;
+} | undefined, cacheMarker: string | undefined): Record<string, unknown>;
+/**
  * Converte `Message.content` (string ou `Part[]`) em partes do formato Chat Completions.
- * Texto com `cache` e `compat.cacheMarker === 'cache_control'` leva `cache_control`;
- * com outro `cacheMarker` a marca é só uma dica e fica de fora (não é mídia).
+ * Texto com `cache` leva a marca do `compat.cacheMarker`: `cache_control` (Anthropic-like)
+ * ou `prompt_cache_breakpoint` (OpenAI/Gateway); com `none` a marca é só uma dica e fica
+ * de fora (não é mídia).
  * Sempre devolve lista; o chamador decide se colapsa texto puro em string.
  * @param {string | Part[]} content
  * @param {{ model: Model, compat: Pick<ResolvedCompat, 'cacheMarker'>, provider?: string }} ctx

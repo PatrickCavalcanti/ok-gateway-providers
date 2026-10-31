@@ -91,9 +91,24 @@ export function assertMediaSupported(part, model, ctx = {}) {
 const asDataUrl = (data, mime) => (data.startsWith('data:') ? data : `data:${mime};base64,${data}`);
 
 /**
+ * Campos de marca de cache de um bloco de texto, conforme o `cacheMarker` do compat.
+ * Vazio quando não há marca pedida ou o compat não a aceita.
+ * @param {{ ttl?: string }|undefined} cache
+ * @param {string|undefined} cacheMarker
+ * @returns {Record<string, unknown>}
+ */
+export function cacheFields(cache, cacheMarker) {
+  if (!cache) return {};
+  if (cacheMarker === 'cache_control') return { cache_control: cache.ttl ? { type: 'ephemeral', ttl: cache.ttl } : { type: 'ephemeral' } };
+  if (cacheMarker === 'prompt_cache_breakpoint') return { prompt_cache_breakpoint: { mode: 'explicit' } };
+  return {};
+}
+
+/**
  * Converte `Message.content` (string ou `Part[]`) em partes do formato Chat Completions.
- * Texto com `cache` e `compat.cacheMarker === 'cache_control'` leva `cache_control`;
- * com outro `cacheMarker` a marca é só uma dica e fica de fora (não é mídia).
+ * Texto com `cache` leva a marca do `compat.cacheMarker`: `cache_control` (Anthropic-like)
+ * ou `prompt_cache_breakpoint` (OpenAI/Gateway); com `none` a marca é só uma dica e fica
+ * de fora (não é mídia).
  * Sempre devolve lista; o chamador decide se colapsa texto puro em string.
  * @param {string | Part[]} content
  * @param {{ model: Model, compat: Pick<ResolvedCompat, 'cacheMarker'>, provider?: string }} ctx
@@ -106,9 +121,7 @@ export function toOpenAIContent(content, { model, compat, provider }) {
     if (part.type === 'text') {
       /** @type {Record<string, unknown>} */
       const out = { type: 'text', text: part.text };
-      if (part.cache && compat.cacheMarker === 'cache_control') {
-        out.cache_control = part.cache.ttl ? { type: 'ephemeral', ttl: part.cache.ttl } : { type: 'ephemeral' };
-      }
+      Object.assign(out, cacheFields(part.cache, compat.cacheMarker));
       return out;
     }
     assertMediaSupported(part, model, { provider });

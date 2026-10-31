@@ -95,9 +95,12 @@ test('marca de cache: cache_control só com cacheMarker cache_control, ttl só q
     { type: 'text', text: 'b', cache_control: { type: 'ephemeral' } },
     { type: 'text', text: 'c' },
   ]);
-  for (const cacheMarker of ['none', 'prompt_cache_breakpoint']) {
-    assert.equal(JSON.stringify(convert(parts, model(), { cacheMarker })).includes('cache_control'), false, cacheMarker);
-  }
+  assert.deepEqual(convert(parts, model(), { cacheMarker: 'prompt_cache_breakpoint' }), [
+    { type: 'text', text: 'a', prompt_cache_breakpoint: { mode: 'explicit' } },
+    { type: 'text', text: 'b', prompt_cache_breakpoint: { mode: 'explicit' } },
+    { type: 'text', text: 'c' },
+  ]);
+  assert.deepEqual(convert(parts, model(), { cacheMarker: 'none' }).map((p) => Object.keys(p).length), [2, 2, 2]);
 });
 
 test('assertMediaSupported: texto passa; a mensagem diz provedor/modelo e o motivo', () => {

@@ -6,7 +6,7 @@
 // campo do compat — não há `if` por provedor aqui.
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
-import { toOpenAIContent } from '../attachments.js';
+import { toOpenAIContent, cacheFields } from '../attachments.js';
 
 /** @typedef {import('../types.js').ApiModule} ApiModule */
 /** @typedef {import('../types.js').Message} Message */
@@ -78,8 +78,9 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
 
   if (compat.usageInStream) body.stream_options = { include_usage: true };
 
-  const maxTokens = request.maxTokens ?? model.maxTokens;
-  if (maxTokens !== undefined) body[compat.maxTokensField] = maxTokens;
+  // Só o que o chamador pediu: `model.maxTokens` é o TETO do modelo, não um valor a enviar
+  // (o OpenRouter reserva crédito pelo máximo e responde 402/400).
+  if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
 
   // Modelo que não aceita temperature (ex.: raciocínio puro): omite, é só amostragem.
   if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
@@ -94,6 +95,13 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
       if (PROTECTED_KEYS.has(k) || (k === 'provider' && !compat.providerRouting)) continue;
       body[k] = v;
     }
+  }
+
+  // OpenRouter: com schema, `require_parameters` faz o roteador recusar endpoint que ignoraria
+  // o response_format. Mescla no `provider` que já veio de params, sem perdê-lo.
+  if (compat.providerRouting && request.responseSchema) {
+    const prev = body.provider;
+    body.provider = { ...(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {}), require_parameters: true };
   }
 
   return { url, headers, body };
@@ -125,7 +133,7 @@ function buildMessages(request, ctx) {
       out.push(m);
     } else if (msg.role === 'tool') {
       if (!msg.toolCallId) throw badRequest(ctx, 'mensagem tool sem toolCallId');
-      out.push({ role: 'tool', tool_call_id: msg.toolCallId, content: textOnly(msg.content, 'tool', ctx) });
+      out.push({ role: 'tool', tool_call_id: msg.toolCallId, content: toolContent(msg.content, ctx) });
     } else {
       throw badRequest(ctx, `papel de mensagem desconhecido: ${String(/** @type {any} */ (msg).role)}`);
     }
@@ -144,15 +152,12 @@ function systemContent(system, compat) {
   if (system === undefined || system === '') return null;
   if (typeof system === 'string') return system;
   if (!system.length) return null;
-  if (compat.cacheMarker === 'cache_control' && system.some((b) => b.cache)) {
-    return system.map((b) => {
-      /** @type {Record<string, unknown>} */
-      const part = { type: 'text', text: b.text };
-      if (b.cache) part.cache_control = b.cache.ttl ? { type: 'ephemeral', ttl: b.cache.ttl } : { type: 'ephemeral' };
-      return part;
-    });
+  if (compat.cacheMarker !== 'none' && system.some((b) => b.cache)) {
+    return system.map((b) => ({ type: 'text', text: b.text, ...cacheFields(b.cache, compat.cacheMarker) }));
   }
-  return system.map((b) => b.text).join('\n\n');
+  // Sem separador: o chamador (o Gateway) corta o system em offsets arbitrários, e um
+  // '\n\n' inserido mudaria o texto e quebraria o prefixo do cache automático.
+  return system.map((b) => b.text).join('');
 }
 
 /**
@@ -161,7 +166,25 @@ function systemContent(system, compat) {
  */
 function userContent(content, ctx) {
   if (typeof content === 'string') return content;
-  return toOpenAIContent(content, ctx);
+  const parts = toOpenAIContent(content, ctx);
+  // Só texto e sem marca: string, que é o que endpoints antigos exigem.
+  if (parts.every((p) => p.type === 'text' && Object.keys(p).length === 2)) return parts.map((p) => p.text).join('');
+  return parts;
+}
+
+/**
+ * Mensagem tool: string, ou lista de partes de texto quando alguma carrega marca de cache
+ * que o compat aceita (senão a marca se perderia).
+ * @param {string | Part[]} content
+ * @param {{ model: import('../types.js').Model, compat: import('../types.js').ResolvedCompat, provider: string }} ctx
+ */
+function toolContent(content, ctx) {
+  const text = textOnly(content, 'tool', ctx); // valida: só texto
+  if (typeof content !== 'string' && ctx.compat.cacheMarker !== 'none') {
+    const parts = toOpenAIContent(content, ctx);
+    if (parts.some((p) => Object.keys(p).length > 2)) return parts;
+  }
+  return text;
 }
 
 /**
@@ -198,7 +221,8 @@ const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
  * @returns {Usage}
  */
 export function normalizeUsage(u) {
-  if (!u || typeof u !== 'object') return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, raw: null };
+  // Uso não declarado não é uso zero: `missing` faz o custo pela tabela virar null.
+  if (!u || typeof u !== 'object') return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, missing: true, raw: null };
   const cacheRead = num(u.prompt_tokens_details?.cached_tokens);
   const cacheWrite = num(u.prompt_tokens_details?.cache_write_tokens);
   /** @type {Usage} */
@@ -240,14 +264,23 @@ export async function* parseStream(events, { account, model }) {
   /** @type {string|null} */ let finishReason = null;
   /** @type {any} */ let lastUsage = null;
   let done = false;
+  let sawCalls = false;
 
   function* flushCalls() {
     for (const [index, c] of [...calls.entries()].sort((a, b) => a[0] - b[0])) {
       if (!c.name) {
         throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool_call sem nome no stream (índice ${index})` });
       }
+      // Cortada (finish length) ou JSON incompleto: emitir `arguments` inválido como se fosse
+      // completo faria o chamador executar a ferramenta com lixo.
+      const args = c.args || '{}';
+      let valid = true;
+      try { JSON.parse(args); } catch { valid = false; }
+      if (!valid || finishReason === 'length') {
+        throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool call cortada (${c.name}${finishReason === 'length' ? ', finish_reason length' : ', arguments não é JSON'})` });
+      }
       // Provedor que não manda id: o do índice basta, o cliente devolve o mesmo no papel tool.
-      yield /** @type {const} */ ({ type: 'tool_call', id: c.id || `call_${index}`, name: c.name, arguments: c.args || '{}' });
+      yield /** @type {const} */ ({ type: 'tool_call', id: c.id || `call_${index}`, name: c.name, arguments: args });
     }
     calls.clear();
   }
@@ -269,15 +302,19 @@ export async function* parseStream(events, { account, model }) {
       });
     }
 
-    if (chunk.usage && typeof chunk.usage === 'object') lastUsage = chunk.usage;
+    // Groq em stream põe o uso em `x_groq.usage` (mesmos campos de `usage`).
+    const chunkUsage = chunk.usage && typeof chunk.usage === 'object' ? chunk.usage
+      : chunk.x_groq?.usage && typeof chunk.x_groq.usage === 'object' ? chunk.x_groq.usage : null;
+    if (chunkUsage) lastUsage = chunkUsage;
 
     const choice = chunk.choices?.[0];
     const delta = choice?.delta;
     if (delta) {
       if (typeof delta.content === 'string' && delta.content) yield { type: 'text', text: delta.content };
-      const reasoning = delta.reasoning ?? delta.reasoning_content;
-      if (typeof reasoning === 'string' && reasoning) yield { type: 'reasoning', text: reasoning };
-      for (const tc of delta.tool_calls ?? []) accumulate(calls, tc);
+      // Primeiro não vazio: `reasoning: ""` ao lado de `reasoning_content` não pode engolir o texto.
+      const reasoning = [delta.reasoning, delta.reasoning_content].find((r) => typeof r === 'string' && r);
+      if (reasoning) yield { type: 'reasoning', text: reasoning };
+      for (const tc of delta.tool_calls ?? []) { sawCalls = true; accumulate(calls, tc); }
     }
     const reason = mapFinishReason(choice?.finish_reason);
     if (reason) {
@@ -290,7 +327,7 @@ export async function* parseStream(events, { account, model }) {
   if (!finishReason) {
     // Sem finish_reason e sem [DONE] o stream foi cortado: não fingir um fim limpo.
     if (!done) throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem finish_reason nem [DONE]` });
-    finishReason = 'stop';
+    finishReason = sawCalls ? 'tool_calls' : 'stop';
   }
   return {
     finishReason,

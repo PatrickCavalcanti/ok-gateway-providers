@@ -161,6 +161,11 @@ export type Usage = {
     cacheWrite1h: number;
     reasoning?: number | undefined;
     audioSeconds?: number | undefined;
+    /**
+     * true quando o provedor não declarou uso nenhum: o custo
+     * pela tabela vira `{ usd: null, source: 'none' }`, nunca US$ 0
+     */
+    missing?: boolean | undefined;
     raw?: unknown;
 };
 export type CostResult = {
