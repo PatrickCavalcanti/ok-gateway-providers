@@ -1,0 +1,26 @@
+{
+  "name": "ok-gateway-providers",
+  "version": "0.1.0",
+  "description": "Fala com provedores de IA a partir de conta + modelo + pedido: eventos, uso normalizado, custo em US$ e erro tipado.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Patrick Cavalcanti",
+  "repository": { "type": "git", "url": "git+https://github.com/PatrickCavalcanti/ok-gateway-providers.git" },
+  "engines": { "node": ">=20" },
+  "main": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": { "types": "./types/index.d.ts", "default": "./src/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "types", "README.md", "LICENSE", "CHANGELOG.md"],
+  "scripts": {
+    "test": "node --test --test-force-exit",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:types": "rm -rf types && tsc -p tsconfig.types.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.6.3"
+  }
+}
