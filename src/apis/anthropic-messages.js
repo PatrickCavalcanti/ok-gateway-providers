@@ -4,6 +4,7 @@
 // HTTP, prazos e custo são do `client.js`; aqui só o formato do fio.
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
+import { applyParams, fuse, isPlainObject } from '../params.js';
 
 /** @typedef {import('../types.js').Model} Model */
 /** @typedef {import('../types.js').Part} Part */
@@ -71,37 +72,30 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   const choice = toolChoiceOf(request, ctx);
   const stop = stopOf(request, ctx);
 
-  /** @type {Record<string, any>} */
-  const outputConfig = {};
-  if (compat.reasoningFormat === 'anthropic_thinking' && effort !== undefined) {
-    body.thinking = { type: adaptive ? 'adaptive' : 'disabled' };
-    if (adaptive) outputConfig.effort = effort;
+  if (request.responseSchema && compat.structuredOutput !== 'output_config') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara saída estruturada (compat.structuredOutput = "${compat.structuredOutput}")`, ctx);
   }
-  if (request.responseSchema) {
-    if (compat.structuredOutput !== 'output_config') {
-      throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara saída estruturada (compat.structuredOutput = "${compat.structuredOutput}")`, ctx);
-    }
-    outputConfig.format = { type: 'json_schema', schema: request.responseSchema.schema };
-  }
-  if (Object.keys(outputConfig).length) body.output_config = outputConfig;
 
+  // params: do modelo, depois da chamada (o último vence).
+  applyParams(body, [model.params, request.params], (k) => PROTECTED.has(k));
+
+  // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo.
+  if (compat.reasoningFormat === 'anthropic_thinking' && effort !== undefined) {
+    fuse(body, 'thinking', { type: adaptive ? 'adaptive' : 'disabled' });
+    delete body.thinking.budget_tokens; // só o thinking `enabled` tem orçamento; sobra do params invalidaria o pedido
+  }
+  fuse(body, 'output_config', {
+    ...(compat.reasoningFormat === 'anthropic_thinking' && adaptive ? { effort } : {}),
+    ...(request.responseSchema ? { format: { type: 'json_schema', schema: request.responseSchema.schema } } : {}),
+  });
+  if (isPlainObject(body.output_config) && !Object.keys(body.output_config).length) delete body.output_config;
+  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
   // Modelo que pensa por padrão responde 400 a `temperature`, mesmo com `effort: 'none'`
   // (o Gateway nunca a manda para eles); com o adaptive ligado ela também é recusada.
-  if (request.temperature !== undefined && compat.supportsTemperature
-    && !compat.thinkingByDefault && !thinkingOn) {
+  // Um `temperature` que o próprio `params` trouxe é escolha do chamador e também é sobrescrito.
+  if (request.temperature !== undefined && ((compat.supportsTemperature && !compat.thinkingByDefault && !thinkingOn) || 'temperature' in body)) {
     body.temperature = request.temperature;
   }
-
-  for (const extra of [model.params, request.params]) {
-    if (!extra) continue;
-    for (const [k, v] of Object.entries(extra)) {
-      if (!PROTECTED.has(k) && v !== undefined) body[k] = v;
-    }
-  }
-
-  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
-  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
-  if (request.temperature !== undefined && 'temperature' in body) body.temperature = request.temperature;
   if (choice !== undefined) body.tool_choice = typeof choice === 'object' ? { type: 'tool', name: choice.name } : { type: TOOL_CHOICE_TYPE[choice] };
   if (stop) body.stop_sequences = stop;
 
@@ -109,12 +103,24 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     url: `${account.baseUrl.replace(/\/+$/, '')}/messages`,
     headers: {
       'x-api-key': apiKey,
-      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-version': versionOf(account, compat),
       'content-type': 'application/json',
       accept: 'text/event-stream',
     },
     body,
   };
+}
+
+/**
+ * `anthropic-version` da conta ou do compat vence o padrão, sem diferença de caixa. Entre os dois vale a ordem do
+ * cliente: o compat vence a conta.
+ * @param {import('../types.js').Account} account @param {ResolvedCompat} compat
+ */
+function versionOf(account, compat) {
+  for (const layer of [compat.headers, account.headers]) {
+    for (const [k, v] of Object.entries(layer ?? {})) if (k.toLowerCase() === 'anthropic-version' && v) return v;
+  }
+  return ANTHROPIC_VERSION;
 }
 
 /** `toolChoice` textual → `tool_choice.type` da API. */
@@ -287,7 +293,7 @@ function partsToBlocks(content, model, compat, ctx, where, allowMedia) {
         throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: a Messages API da Anthropic não aceita ${part.type === 'audio' ? 'áudio' : 'vídeo'}`, ctx);
       case 'image':
         if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar imagem`, ctx);
-        out.push(imageBlock(part, model, ctx, at));
+        out.push({ ...imageBlock(part, model, ctx, at), ...cacheField(part.cache, compat) });
         return;
       case 'file':
         if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar arquivo`, ctx);

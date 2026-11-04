@@ -1,6 +1,7 @@
 // ok-gateway-providers — embeddings no formato OpenAI.
 import { ProviderError } from '../../errors.js';
 import { makeUsage, num, reportedCost } from '../../usage.js';
+import { applyParams } from '../../params.js';
 
 const PROTECTED = new Set(['model', 'input']);
 
@@ -12,10 +13,9 @@ export const embeddings = {
     }
     /** @type {Record<string, unknown>} */
     const body = { model: model.id, input: request.texts };
+    applyParams(body, [model.params, request.params], (k) => PROTECTED.has(k));
+    // Campo de controle do pedido, depois dos params: o explícito vence.
     if (request.dimensions !== undefined) body.dimensions = request.dimensions;
-    for (const layer of [model.params, request.params]) {
-      for (const [k, v] of Object.entries(layer ?? {})) if (!PROTECTED.has(k)) body[k] = v;
-    }
     return {
       url: `${account.baseUrl.replace(/\/+$/, '')}/embeddings`,
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },

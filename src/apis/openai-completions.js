@@ -6,6 +6,7 @@
 // campo do compat — não há `if` por provedor aqui.
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
+import { applyParams, fuse } from '../params.js';
 import { toOpenAIContent, cacheFields } from '../attachments.js';
 import { embeddings } from './openai-completions/embeddings.js';
 import { transcription } from './openai-completions/transcription.js';
@@ -40,7 +41,7 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  /** @type {Record<string, unknown>} */
+  /** @type {Record<string, any>} */
   const body = {
     model: model.id,
     messages: buildMessages(request, { model, compat, provider: account.provider }),
@@ -61,20 +62,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   const choice = toolChoiceOf(request, ctx);
   const stop = stopOf(request, ctx);
 
-  if (request.responseSchema) {
-    const { name, schema, strict } = request.responseSchema;
-    switch (compat.structuredOutput) {
-      case 'response_format':
-        body.response_format = { type: 'json_schema', json_schema: { name: name ?? 'response', strict: strict ?? true, schema } };
-        break;
-      case 'top_level_json_schema': // extensão do llama.cpp: o schema solto no topo do corpo
-        body.json_schema = schema;
-        break;
-      default:
-        // 'none' (ou um valor que não existe neste fio): não dá para afirmar que o endpoint
-        // aplica o schema, e ignorar entregaria texto livre a quem pediu JSON.
-        throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada (compat.structuredOutput = ${compat.structuredOutput})`, ctx);
-    }
+  if (request.responseSchema && compat.structuredOutput !== 'response_format' && compat.structuredOutput !== 'top_level_json_schema') {
+    // 'none' (ou um valor que não existe neste fio): não dá para afirmar que o endpoint
+    // aplica o schema, e ignorar entregaria texto livre a quem pediu JSON.
+    throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada (compat.structuredOutput = ${compat.structuredOutput})`, ctx);
   }
 
   // Esforço de raciocínio. Com reasoningFormat 'none' o modelo/endpoint não tem o
@@ -89,39 +80,41 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   if (request.effort !== undefined && budget?.max_tokens !== undefined) {
     throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, message: `${ctx.provider}/${ctx.model}: effort e reasoning.maxTokens não vão juntos; escolha um` });
   }
-  if (request.effort !== undefined || budget) {
-    switch (compat.reasoningFormat) {
-      case 'reasoning_effort': body.reasoning_effort = request.effort; break;
-      case 'reasoning_object': body.reasoning = { ...(request.effort !== undefined ? { effort: request.effort } : {}), ...budget }; break;
-      case 'none': break;
-      default:
-        throw unsupported(`${ctx.provider}/${ctx.model}: reasoningFormat "${compat.reasoningFormat}" não existe no fio openai-completions`, ctx);
-    }
+  const reasoned = request.effort !== undefined || budget;
+  if (reasoned && !['reasoning_effort', 'reasoning_object', 'none'].includes(compat.reasoningFormat)) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: reasoningFormat "${compat.reasoningFormat}" não existe no fio openai-completions`, ctx);
   }
 
-  if (compat.usageInStream) body.stream_options = { include_usage: true };
-
-  // Só o que o chamador pediu: `model.maxTokens` é o TETO do modelo, não um valor a enviar
-  // (o OpenRouter reserva crédito pelo máximo e responde 402/400).
-  if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
-
-  // Modelo que não aceita temperature (ex.: raciocínio puro): omite, é só amostragem.
-  if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
   if (compat.supportsStore) body.store = false;
 
   // params: do modelo, depois da chamada (o último vence). Nunca sobrescrevem o que é do
   // fio (PROTECTED_KEYS); descartar uma chave protegida é deliberado e não gera erro.
   // `provider` (roteamento do OpenRouter) só passa com compat.providerRouting.
-  for (const layer of [model.params, request.params]) {
-    if (!layer) continue;
-    for (const [k, v] of Object.entries(layer)) {
-      if (PROTECTED_KEYS.has(k) || (k === 'provider' && !compat.providerRouting)) continue;
-      body[k] = v;
+  applyParams(body, [model.params, request.params], (k) => PROTECTED_KEYS.has(k) || (k === 'provider' && !compat.providerRouting));
+
+  // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo.
+  if (request.responseSchema) {
+    const { name, schema, strict } = request.responseSchema;
+    if (compat.structuredOutput === 'response_format') {
+      body.response_format = { type: 'json_schema', json_schema: { name: name ?? 'response', strict: strict ?? true, schema } };
+    } else {
+      body.json_schema = schema; // extensão do llama.cpp: o schema solto no topo do corpo
     }
   }
-
-  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
+  if (reasoned) {
+    if (compat.reasoningFormat === 'reasoning_effort') body.reasoning_effort = request.effort;
+    else if (compat.reasoningFormat === 'reasoning_object') {
+      fuse(body, 'reasoning', { ...(request.effort !== undefined ? { effort: request.effort } : {}), ...budget });
+      // effort e max_tokens se excluem: o que o pedido escolheu tira o que o params trouxe do outro.
+      if (request.effort !== undefined) delete body.reasoning.max_tokens;
+      if (budget?.max_tokens !== undefined) delete body.reasoning.effort;
+    }
+  }
+  if (compat.usageInStream) body.stream_options = { include_usage: true };
+  // Só o que o chamador pediu: `model.maxTokens` é o TETO do modelo, não um valor a enviar
+  // (o OpenRouter reserva crédito pelo máximo e responde 402/400).
   if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
+  // Modelo que não aceita temperature (ex.: raciocínio puro): omite, é só amostragem.
   if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
   if (choice !== undefined) {
     body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', function: { name: choice.name } };
@@ -130,10 +123,7 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
 
   // OpenRouter: com schema, `require_parameters` faz o roteador recusar endpoint que ignoraria
   // o response_format. Mescla no `provider` que já veio de params, sem perdê-lo.
-  if (compat.providerRouting && request.responseSchema) {
-    const prev = body.provider;
-    body.provider = { ...(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {}), require_parameters: true };
-  }
+  if (compat.providerRouting && request.responseSchema) fuse(body, 'provider', { require_parameters: true });
 
   return { url, headers, body };
 }

@@ -383,8 +383,9 @@ test('finishReason: MAX_TOKENS → length, mesmo com tool call; SAFETY e RECITAT
 
 test('outro finishReason passa em minúsculas', async () => {
   const sse = (/** @type {string} */ r) => `data: {"candidates":[{"content":{"parts":[{"text":"x"}],"role":"model"},"finishReason":"${r}"}]}\n\n`;
-  assert.equal((await chat(sse('MALFORMED_FUNCTION_CALL'))).result.finishReason, 'malformed_function_call');
-  assert.equal((await chat(sse('BLOCKLIST'))).result.finishReason, 'blocklist');
+  // PROHIBITED_CONTENT, BLOCKLIST e SPII são content_filter, e MALFORMED_FUNCTION_CALL é upstream (test/review-t12.test.js).
+  assert.equal((await chat(sse('OTHER'))).result.finishReason, 'other');
+  assert.equal((await chat(sse('LANGUAGE'))).result.finishReason, 'language');
 });
 
 test('prompt bloqueado (promptFeedback.blockReason, sem candidatos) é content_filter', async () => {

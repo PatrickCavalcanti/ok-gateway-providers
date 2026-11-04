@@ -8,6 +8,7 @@
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
 import { assertMediaSupported, parseDataUrl } from '../attachments.js';
 import { makeUsage, num } from '../usage.js';
+import { applyParams, fuse, isPlainObject } from '../params.js';
 
 /** @typedef {import('../types.js').ApiModule} ApiModule */
 /** @typedef {import('../types.js').Message} Message */
@@ -64,38 +65,32 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     if (declarations) body.tools = [{ functionDeclarations: declarations }];
   }
 
+  if (request.responseSchema && compat.structuredOutput !== 'response_json_schema') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada neste fio (compat.structuredOutput = ${compat.structuredOutput})`, ctx);
+  }
+
+  // params: do modelo, depois da chamada (o último vence). `generationConfig` se funde com o dos params de
+  // outra camada em vez de trocá-lo, para `thinkingConfig` e afins não apagarem o resto.
   /** @type {Record<string, any>} */
   const generationConfig = {};
+  for (const layer of [model.params, request.params]) {
+    if (isPlainObject(layer?.generationConfig)) Object.assign(generationConfig, layer.generationConfig);
+    else if (layer?.generationConfig !== undefined) throw invalid('params.generationConfig precisa ser um objeto', ctx);
+  }
+  applyParams(body, [model.params, request.params], (k) => PROTECTED_KEYS.has(k) || k === 'generationConfig');
+
+  // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo.
   if (request.temperature !== undefined && compat.supportsTemperature) generationConfig.temperature = request.temperature;
   if (request.maxTokens !== undefined) generationConfig.maxOutputTokens = request.maxTokens;
   if (request.responseSchema) {
-    if (compat.structuredOutput !== 'response_json_schema') {
-      throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada neste fio (compat.structuredOutput = ${compat.structuredOutput})`, ctx);
-    }
     generationConfig.responseMimeType = 'application/json';
     generationConfig.responseJsonSchema = request.responseSchema.schema;
   }
-
-  // params: do modelo, depois da chamada (o último vence). `generationConfig` se funde com o do
-  // fio em vez de trocá-lo, para `thinkingConfig` e afins não apagarem temperature e maxOutputTokens.
-  for (const layer of [model.params, request.params]) {
-    if (!layer) continue;
-    for (const [k, v] of Object.entries(layer)) {
-      if (PROTECTED_KEYS.has(k) || v === undefined) continue;
-      if (k === 'generationConfig') {
-        if (!isPlainObject(v)) throw invalid('params.generationConfig precisa ser um objeto', ctx);
-        Object.assign(generationConfig, v);
-        continue;
-      }
-      body[k] = v;
-    }
-  }
-  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
-  if (request.maxTokens !== undefined) generationConfig.maxOutputTokens = request.maxTokens;
-  if (request.temperature !== undefined && compat.supportsTemperature) generationConfig.temperature = request.temperature;
-  if (choice !== undefined && request.cachedContent === undefined) body.toolConfig = { functionCallingConfig: functionCallingConfig(choice) };
   if (stop) generationConfig.stopSequences = stop;
   if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;
+  if (choice !== undefined && request.cachedContent === undefined) {
+    fuse(body, 'toolConfig', { functionCallingConfig: functionCallingConfig(choice) });
+  }
 
   return { url, headers, body };
 }
@@ -140,8 +135,6 @@ function stopOf(request, ctx) {
   return stop.length ? stop : undefined;
 }
 
-/** @param {unknown} v @returns {v is Record<string, unknown>} */
-const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /**
  * System como um texto só, sem separador: o chamador corta o system em offsets arbitrários.
@@ -371,6 +364,9 @@ function statusOfError(error) {
   return /** @type {Record<string, number>} */ (STATUS_BY_NAME)[error?.status] ?? 500;
 }
 
+/** `finishReason` em que o Gemini recusou o conteúdo (do prompt ou da resposta). */
+const CONTENT_FILTER_REASONS = new Set(['SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII']);
+
 /**
  * `finishReason` do Gemini → vocabulário da lib. `STOP` com tool call na resposta é `tool_calls`.
  * O que não conhecemos passa em minúsculas.
@@ -379,7 +375,7 @@ function statusOfError(error) {
 function mapFinishReason(reason, sawCall) {
   if (reason === 'STOP') return sawCall ? 'tool_calls' : 'stop';
   if (reason === 'MAX_TOKENS') return 'length';
-  if (reason === 'SAFETY' || reason === 'RECITATION') return 'content_filter';
+  if (CONTENT_FILTER_REASONS.has(reason)) return 'content_filter';
   return reason.toLowerCase();
 }
 
@@ -470,6 +466,10 @@ export async function* parseStream(events, { account, model }) {
 
   if (!finishReason && !blocked) {
     throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem finishReason (resposta cortada)` });
+  }
+  // Chamada de função que o Gemini não conseguiu montar: não há tool call para devolver, e outro alvo pode ter.
+  if (finishReason === 'MALFORMED_FUNCTION_CALL') {
+    throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: o Gemini devolveu finishReason MALFORMED_FUNCTION_CALL (chamada de função malformada)` });
   }
   const reason = finishReason ? mapFinishReason(finishReason, sawCall) : 'content_filter';
   // Um fim normal sem nada emitido e com parte desconhecida seria uma resposta vazia fingindo sucesso.
