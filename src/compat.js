@@ -39,7 +39,7 @@ export const DEFAULT_COMPAT = Object.freeze({
   }),
   'google-generative-ai': Object.freeze({ ...BASE, structuredOutput: 'response_json_schema', usageInStream: true }),
   // Saída estruturada continua 'none': só a conta oficial liga 'text_format' (o llama.cpp aceita o campo e o ignora).
-  'openai-responses': Object.freeze({ ...BASE, maxTokensField: 'max_output_tokens' }),
+  'openai-responses': Object.freeze({ ...BASE, maxTokensField: 'max_output_tokens', supportsTemperature: false }),
 });
 
 /**

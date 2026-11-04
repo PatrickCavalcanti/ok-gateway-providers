@@ -244,8 +244,8 @@ test('maxTokens vai em max_output_tokens (campo do compat); o teto do modelo nã
 });
 
 test('temperature segue supportsTemperature; store:false só com supportsStore', () => {
-  assert.equal(build({ messages: hi, temperature: 0.2 }).body.temperature, 0.2);
-  assert.equal('temperature' in build({ messages: hi, temperature: 0.2 }, { compat: { supportsTemperature: false } }).body, false);
+  assert.equal(build({ messages: hi, temperature: 0.2 }, { compat: { supportsTemperature: true } }).body.temperature, 0.2);
+  assert.equal('temperature' in build({ messages: hi, temperature: 0.2 }).body, false);
   assert.equal('store' in build({ messages: hi }).body, false);
   assert.equal(build({ messages: hi }, { compat: { supportsStore: true } }).body.store, false);
 });
@@ -566,4 +566,49 @@ test('uso: gravação de cache sai do input, como o cache lido', async () => {
   const sse = 'data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":1,"input_tokens_details":{"cached_tokens":30,"cache_write_tokens":20}}}}\n\n';
   const { result } = await chat(sse);
   assert.deepEqual([result.usage.input, result.usage.cacheRead, result.usage.cacheWrite], [50, 30, 20]);
+});
+
+test('sem output_item.done: a chamada sai do evento final, sem duplicar', async () => {
+  const lines = [
+    { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'clima', arguments: '' } },
+    { type: 'response.function_call_arguments.delta', output_index: 0, item_id: 'fc_1', delta: '{"cidade":"X"}' },
+    { type: 'response.completed', response: { output: [{ type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'clima', arguments: '{"cidade":"X"}' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  const { events, result } = await chat(lines.map((l) => `data: ${JSON.stringify(l)}\n\n`).join(''), { request: { messages: hi, tools } });
+  assert.deepEqual(events.filter((e) => e.type === 'tool_call'), [{ type: 'tool_call', id: 'call_1', name: 'clima', arguments: '{"cidade":"X"}' }]);
+  assert.equal(result.finishReason, 'tool_calls');
+});
+
+test('com output_item.done e o evento final: uma chamada só', async () => {
+  const item = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'clima', arguments: '{}' };
+  const lines = [
+    { type: 'response.output_item.added', output_index: 0, item: { ...item, arguments: '' } },
+    { type: 'response.output_item.done', output_index: 0, item },
+    { type: 'response.completed', response: { output: [item], usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  const { events } = await chat(lines.map((l) => `data: ${JSON.stringify(l)}\n\n`).join(''), { request: { messages: hi, tools } });
+  assert.equal(events.filter((e) => e.type === 'tool_call').length, 1);
+});
+
+test('chamada aberta sem fim nenhum dá upstream, não some', async () => {
+  const lines = [
+    { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'clima', arguments: '' } },
+    { type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  await assert.rejects(chat(lines.map((l) => `data: ${JSON.stringify(l)}\n\n`).join(''), { request: { messages: hi, tools } }), (e) => e.type === 'upstream');
+});
+
+test('explícito vence params: maxTokens, temperature, tool_choice e schema no topo', () => {
+  const tool = [{ name: 't', parameters: { type: 'object', properties: {} } }];
+  const acc = { id: 'l', provider: 'llama', api: 'openai-responses', baseUrl: 'http://x/v1', compat: { structuredOutput: 'top_level_json_schema', supportsTemperature: true } };
+  const mdl = { ...model, params: { max_output_tokens: 1, temperature: 0.1, tool_choice: 'none', json_schema: { velho: true } } };
+  const schema = { type: 'object', properties: {} };
+  const { body } = buildRequest({ account: acc, model: mdl, compat: resolveCompat(acc, mdl), apiKey: '', request: { messages: hi, tools: tool, toolChoice: 'required', maxTokens: 50, temperature: 0.7, responseSchema: { schema } } });
+  assert.deepEqual([body.max_output_tokens, body.temperature, body.tool_choice, body.json_schema], [50, 0.7, 'required', schema]);
+});
+
+test('temperature não vai por padrão neste fio', () => {
+  const acc = { id: 'o', provider: 'openai', api: 'openai-responses', baseUrl: 'https://x/v1' };
+  const { body } = buildRequest({ account: acc, model, compat: resolveCompat(acc, model), apiKey: '', request: { messages: hi, temperature: 0.7 } });
+  assert.equal('temperature' in body, false);
 });

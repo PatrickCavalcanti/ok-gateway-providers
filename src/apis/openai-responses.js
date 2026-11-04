@@ -116,7 +116,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     }
   }
 
-  // `toolChoice` explícito vence `params`, como no openai-completions.
+  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
+  if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
+  if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
+  if (request.responseSchema && compat.structuredOutput === 'top_level_json_schema') body.json_schema = request.responseSchema.schema;
   if (choice !== undefined) body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', name: choice.name };
 
   return { url, headers, body };
@@ -329,6 +332,8 @@ export async function* parseStream(events, { account, model }) {
   const calls = new Map();
   /** @type {Map<number, string>} output_index → item.id, para o delta que só traz o índice */
   const byIndex = new Map();
+  /** @type {Set<string>} chamadas já emitidas */
+  const closed = new Set();
   let sawCall = false;
   let emitted = false;
   let callCount = 0;
@@ -342,6 +347,31 @@ export async function* parseStream(events, { account, model }) {
     let c = calls.get(key);
     if (!c) { c = { callId: '', name: '', args: '' }; calls.set(key, c); }
     return c;
+  };
+
+  /**
+   * Fecha uma chamada: o item final vence o acumulado. Cortada pelo limite de tokens ou com JSON
+   * incompleto, dá erro: emitir `arguments` inválido faria o chamador executar a ferramenta com lixo.
+   * @param {string} key @param {any} item
+   */
+  const closeCall = (key, item) => {
+    const c = calls.get(key) ?? { callId: '', name: '', args: '' };
+    calls.delete(key);
+    closed.add(key);
+    const name = (typeof item.name === 'string' && item.name) || c.name;
+    const args = (typeof item.arguments === 'string' && item.arguments) || c.args;
+    if (!name) {
+      throw new ProviderError({ type: 'upstream', ...ctx, body: item, message: `${ctx.provider}/${ctx.model}: function_call sem nome no stream` });
+    }
+    const text = args.trim() ? args : '{}';
+    try { JSON.parse(text); } catch {
+      throw new ProviderError({ type: 'upstream', ...ctx, body: item, message: `${ctx.provider}/${ctx.model}: tool call cortada (${name}, arguments não é JSON)` });
+    }
+    sawCall = true;
+    emitted = true;
+    const id = (typeof item.call_id === 'string' && item.call_id) || c.callId || item.id || `call_${callCount}`;
+    callCount += 1;
+    return /** @type {const} */ ({ type: 'tool_call', id, name, arguments: text });
   };
 
   for await (const ev of events) {
@@ -383,27 +413,7 @@ export async function* parseStream(events, { account, model }) {
 
       case 'response.output_item.done':
         if (chunk.item?.type === 'function_call') {
-          const key = keyOf(chunk, chunk.item.id);
-          const c = calls.get(key) ?? { callId: '', name: '', args: '' };
-          calls.delete(key);
-          const item = chunk.item;
-          const name = (typeof item.name === 'string' && item.name) || c.name;
-          const args = (typeof item.arguments === 'string' && item.arguments) || c.args;
-          if (!name) {
-            throw new ProviderError({ type: 'upstream', ...ctx, body: data, message: `${ctx.provider}/${ctx.model}: function_call sem nome no stream` });
-          }
-          // Cortada pelo limite de tokens ou JSON incompleto: emitir `arguments` inválido como se fosse
-          // completo faria o chamador executar a ferramenta com lixo.
-          const text = args.trim() ? args : '{}';
-          let valid = true;
-          try { JSON.parse(text); } catch { valid = false; }
-          if (!valid) {
-            throw new ProviderError({ type: 'upstream', ...ctx, body: data, message: `${ctx.provider}/${ctx.model}: tool call cortada (${name}, arguments não é JSON)` });
-          }
-          sawCall = true;
-          emitted = true;
-          yield /** @type {const} */ ({ type: 'tool_call', id: (typeof item.call_id === 'string' && item.call_id) || c.callId || item.id || `call_${callCount}`, name, arguments: text });
-          callCount += 1;
+          yield closeCall(keyOf(chunk, chunk.item.id), chunk.item);
         }
         break;
 
@@ -427,7 +437,7 @@ export async function* parseStream(events, { account, model }) {
         throw streamError(chunk?.error && typeof chunk.error === 'object' ? chunk.error : chunk, chunk, ctx, emitted);
 
       default:
-        // response.created, in_progress, content_part.*, *.done, refusal… sem evento da lib.
+        // response.created, in_progress, content_part.*, *.done… sem evento da lib.
         break;
     }
     if (kind) break;
@@ -435,6 +445,14 @@ export async function* parseStream(events, { account, model }) {
 
   if (!kind) {
     throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem evento final (response.completed, response.incomplete ou response.failed)` });
+  }
+  // Servidor que copia o formato pode não mandar output_item.done: o dado está no evento final.
+  for (const item of Array.isArray(final.output) ? final.output : []) {
+    if (item?.type === 'function_call' && item.id !== undefined && !closed.has(item.id)) yield closeCall(item.id, item);
+  }
+  // Chamada aberta sem fim nenhum não some em silêncio.
+  for (const c of calls.values()) {
+    throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool call sem fim no stream (${c.name || 'sem nome'})` });
   }
   const finishReason = kind === 'incomplete'
     ? incompleteReason(final.incomplete_details?.reason)

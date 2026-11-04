@@ -21,6 +21,14 @@
 3. **`openai-responses`:** a saída estruturada ganha o valor `text_format` em `compat.structuredOutput`. O padrão do fio continua conservador (`none`), e a conta oficial liga.
 4. **`reasoning.maxTokens` e `exclude`:** só existem no formato `reasoning_object`. Em qualquer outro formato, dão `unsupported`.
 
+### Ajustes durante a execução
+
+5. **Fatos medidos na API real** (2026-11-04): o OpenRouter recusa `effort` e `reasoning.max_tokens` juntos, então a lib dá `invalid_request`. A Anthropic (Sonnet 5.5) recusa `tool_choice` `any` e `tool` com pensamento ligado: a lib manda, e o erro chega com `retryOther: true`.
+6. **O que o pedido traz explícito vence `params`:** `toolChoice`, `stop`, `maxTokens`, `temperature`, `responseSchema`. Sem valor explícito, `params` passa.
+7. **`openai-responses`:** reexporta as operações do `openai-completions`, porque as rotas não mudam na OpenAI. Aceita `top_level_json_schema` para o llama.cpp. `response.refusal.delta` vira texto, e o fim sai `content_filter`. `cache_write_tokens` sai do input, como no `openai-completions`. `supportsTemperature` nasce `false`.
+8. **`toolName`** na mensagem `tool` e **resultados de tool seguidos num turno só** no Gemini.
+9. **Catálogo:** o vocabulário real de saída do OpenRouter é `speech`, `transcription`, `decisions`, `rerank`, `video`. Os três primeiros viram operação; os outros, nenhuma.
+
 ---
 
 ## Mapa de quem faz
