@@ -7,6 +7,11 @@
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
 import { toOpenAIContent, cacheFields } from '../attachments.js';
+import { embeddings } from './openai-completions/embeddings.js';
+import { transcription } from './openai-completions/transcription.js';
+import { speech } from './openai-completions/speech.js';
+import { imageGeneration } from './openai-completions/image.js';
+import { decision } from './openai-completions/decision.js';
 
 /** @typedef {import('../types.js').ApiModule} ApiModule */
 /** @typedef {import('../types.js').Message} Message */
@@ -14,6 +19,8 @@ import { toOpenAIContent, cacheFields } from '../attachments.js';
 /** @typedef {import('../types.js').Usage} Usage */
 
 export const api = /** @type {const} */ ('openai-completions');
+
+export const operations = { embeddings, transcription, speech, 'image-generation': imageGeneration, decision };
 
 /** Chaves que `params` nunca sobrescreve: o fio é dono delas. */
 const PROTECTED_KEYS = new Set(['model', 'messages', 'stream', 'tools', 'response_format', 'stream_options']);
