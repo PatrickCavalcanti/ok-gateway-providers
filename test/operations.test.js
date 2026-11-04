@@ -177,3 +177,15 @@ test('chat: parseStream recebe os headers da resposta', async () => {
   await run.result;
   assert.equal(seen.streamCtx.headers.get('x-eco'), 'oi');
 });
+
+test('json() e bytes() dividem a mesma leitura do corpo', async () => {
+  registerApi({ api: 'fake-memo', buildRequest() { throw new Error('não usado'); }, async *parseStream() { return { finishReason: 'stop', usage: makeUsage() }; },
+    operations: { embeddings: {
+      buildRequest: () => ({ url: 'https://x/e', headers: {}, body: {} }),
+      async parseResponse(res) { const a = await res.bytes(); const j = await res.json(); return { result: { n: a.length, j }, usage: makeUsage({ input: 1 }) }; },
+    } } });
+  const client = createClient({ account: { id: 'a', provider: 'p', api: 'fake-memo', baseUrl: 'https://x', apiKey: 'k' }, model: { id: 'm', operations: ['embeddings'], input: ['text'], output: ['embeddings'] }, fetch: async () => new Response('{"ok":1}') });
+  const r = await client.embed({ texts: ['t'] });
+  assert.deepEqual(r.j, { ok: 1 });
+  assert.equal(r.n, 8);
+});

@@ -231,6 +231,7 @@ async function runOperation(operation, { account, model, request, doFetch }) {
     if (!res.ok) {
       let text = '';
       try { text = await res.text(); } catch { /* corpo ilegível: fica o status */ }
+      if (deadline.reason()) throw fromFailure(new Error('corpo de erro encerrado'), deadline.reason(), ctx, false);
       throw errorFromStatus(res.status, { ...ctx, body: text });
     }
     deadline.touch(); // chegaram os headers: acaba o primeiro byte, começa a inatividade
@@ -252,7 +253,9 @@ async function runOperation(operation, { account, model, request, doFetch }) {
  * @returns {import('./types.js').OneShotResponse}
  */
 function oneShot(res, deadline, ctx) {
-  const bytes = async () => {
+  /** @type {Promise<Uint8Array>|undefined} */
+  let memo;
+  const read = async () => {
     if (!res.body) return new Uint8Array();
     /** @type {Uint8Array[]} */
     const chunks = [];
@@ -270,6 +273,8 @@ function oneShot(res, deadline, ctx) {
     for (const c of chunks) { out.set(c, at); at += c.length; }
     return out;
   };
+  // O corpo só pode ser lido uma vez: json() e bytes() dividem a mesma leitura.
+  const bytes = () => (memo ??= read());
   return {
     status: res.status,
     headers: res.headers,
