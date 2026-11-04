@@ -2,6 +2,10 @@
 
 Versão semântica; `0.x` enquanto a API se acomoda — cada consumidor fixa a tag exata.
 
+## 0.3.0 — 2026-11-04
+
+- Chat: `toolCalls[].cache` marca o bloco `tool_use` no fio `anthropic-messages`. Um `assistant` só com tool calls agora pode receber marca de cache.
+
 ## 0.2.0 — 2026-11-04
 
 - Operações de chamada única: `embed`, `transcribe`, `speak`, `generateImage` e `decide`.

@@ -1,6 +1,6 @@
 {
   "name": "ok-gateway-providers",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fala com provedores de IA a partir de conta + modelo + pedido: eventos, uso normalizado, custo em US$ e erro tipado.",
   "type": "module",
   "license": "MIT",

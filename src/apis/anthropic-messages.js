@@ -189,7 +189,7 @@ function buildMessages(messages, model, compat, ctx) {
         if (!call || typeof call !== 'object') throw invalid(`${at}: tool_call malformado (esperado um objeto)`, ctx);
         if (typeof call.id !== 'string' || !call.id) throw invalid(`${at}: tool_call precisa de id`, ctx);
         if (typeof call.name !== 'string' || !call.name) throw invalid(`${at}: tool_call precisa de name`, ctx);
-        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, at, ctx) });
+        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, at, ctx), ...cacheField(call.cache, compat) });
       });
       if (!content.length) throw invalid(`${where}: mensagem do assistente vazia (sem texto nem tool_calls)`, ctx);
       out.push({ role: 'assistant', content });

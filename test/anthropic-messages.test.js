@@ -121,6 +121,21 @@ test('tool call fragmentada: arguments completos, vazio vira {}', async () => {
   ]);
 });
 
+test('cache em toolCalls vira cache_control no tool_use', async () => {
+  const f = fakeFetch(() => sseResponse(fixture('text.sse')));
+  const client = createClient({ account, model: baseModel, fetch: f });
+  await collect(client.chat({ messages: [
+    { role: 'user', content: 'oi' },
+    { role: 'assistant', content: '', toolCalls: [
+      { id: 't1', name: 'a', arguments: '{}' },
+      { id: 't2', name: 'b', arguments: '{}', cache: { ttl: '1h' } },
+    ] },
+  ] }));
+  const blocks = f.calls[0].body.messages[1].content;
+  assert.equal(blocks[0].cache_control, undefined);
+  assert.deepEqual(blocks[1].cache_control, { type: 'ephemeral', ttl: '1h' });
+});
+
 test('raciocínio: thinking_delta vira reasoning e o corpo liga o thinking adaptativo', async () => {
   const f = fakeFetch(() => sseResponse(fixture('thinking.sse')));
   const model = { ...baseModel, id: 'claude-sonnet-5', reasoning: true, compat: { thinkingByDefault: true } };

@@ -110,6 +110,7 @@
  * @property {string} id
  * @property {string} name
  * @property {string} arguments
+ * @property {CacheMark} [cache]  marca de cache; só o fio anthropic-messages usa
  * @property {Record<string, unknown>} [providerData]  dado opaco do provedor, que o chamador guarda e devolve
  *   na mesma chamada. Gemini: `thoughtSignature`. Os outros fios ignoram
  */

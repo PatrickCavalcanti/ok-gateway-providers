@@ -139,6 +139,10 @@ export type ToolCall = {
     name: string;
     arguments: string;
     /**
+     * marca de cache; só o fio anthropic-messages usa
+     */
+    cache?: CacheMark | undefined;
+    /**
      * dado opaco do provedor, que o chamador guarda e devolve
      * na mesma chamada. Gemini: `thoughtSignature`. Os outros fios ignoram
      */
