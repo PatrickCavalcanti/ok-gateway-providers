@@ -8,6 +8,7 @@
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
 import { assertMediaSupported, defaultFilename, parseDataUrl } from '../attachments.js';
 import { makeUsage, num, reportedCost } from '../usage.js';
+import { applyParams, fuse } from '../params.js';
 
 /** @typedef {import('../types.js').ApiModule} ApiModule */
 /** @typedef {import('../types.js').Message} Message */
@@ -22,9 +23,6 @@ export { operations } from './openai-completions.js';
 
 /** Chaves do corpo que `params` nunca sobrescreve: o fio é dono delas. */
 const PROTECTED_KEYS = new Set(['model', 'input', 'stream', 'tools']);
-
-/** Chaves que `params` funde com o objeto do fio em vez de trocá-lo (`text.verbosity`, `reasoning.summary`…); o que é do fio vence. */
-const MERGED_KEYS = ['text', 'reasoning'];
 
 /** Este fio não tem campo de erro no resultado da tool: o aviso vai no texto (spec T1.2 §6). */
 const TOOL_ERROR_PREFIX = 'Tool error: ';
@@ -66,17 +64,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
 
   const choice = toolChoiceOf(request, ctx);
 
-  if (request.responseSchema && compat.structuredOutput === 'top_level_json_schema') {
-    // Extensão do llama.cpp: o /v1/responses dele ignora text.format e devolve texto livre.
-    body.json_schema = request.responseSchema.schema;
-  } else if (request.responseSchema) {
-    if (compat.structuredOutput !== 'text_format') {
-      // 'none' (ou um formato de outro fio): não dá para afirmar que o endpoint aplica o schema, e
-      // ignorar entregaria texto livre a quem pediu JSON.
-      throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada neste fio (compat.structuredOutput = ${compat.structuredOutput}; use "text_format")`, ctx);
-    }
-    const { name, schema, strict } = request.responseSchema;
-    body.text = { format: { type: 'json_schema', name: name ?? 'response', strict: strict ?? true, schema } };
+  if (request.responseSchema && compat.structuredOutput !== 'top_level_json_schema' && compat.structuredOutput !== 'text_format') {
+    // 'none' (ou um formato de outro fio): não dá para afirmar que o endpoint aplica o schema, e
+    // ignorar entregaria texto livre a quem pediu JSON.
+    throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada neste fio (compat.structuredOutput = ${compat.structuredOutput}; use "text_format")`, ctx);
   }
 
   // Orçamento (`reasoning.maxTokens`/`exclude`) não existe na Responses API, qualquer que seja o formato.
@@ -85,13 +76,8 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   if (budget && (budget.maxTokens !== undefined || budget.exclude !== undefined)) {
     throw unsupported(`${ctx.provider}/${ctx.model}: reasoning.maxTokens/exclude não existem na Responses API; use effort`, ctx);
   }
-  if (request.effort !== undefined) {
-    switch (compat.reasoningFormat) {
-      case 'reasoning_object': body.reasoning = { effort: request.effort }; break;
-      case 'none': break;
-      default:
-        throw unsupported(`${ctx.provider}/${ctx.model}: reasoningFormat "${compat.reasoningFormat}" não existe no fio openai-responses`, ctx);
-    }
+  if (request.effort !== undefined && compat.reasoningFormat !== 'reasoning_object' && compat.reasoningFormat !== 'none') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: reasoningFormat "${compat.reasoningFormat}" não existe no fio openai-responses`, ctx);
   }
 
   if (compat.supportsStore) body.store = false;
@@ -99,32 +85,25 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   // params: do modelo, depois da chamada (o último vence). Nunca sobrescrevem o que é do fio
   // (PROTECTED_KEYS); descartar uma chave protegida é deliberado e não gera erro.
   // `provider` (roteamento do OpenRouter) só passa com compat.providerRouting.
-  const owned = Object.fromEntries(MERGED_KEYS.filter((k) => body[k] !== undefined).map((k) => [k, body[k]]));
-  for (const layer of [model.params, request.params]) {
-    if (!layer) continue;
-    for (const [k, v] of Object.entries(layer)) {
-      if (PROTECTED_KEYS.has(k) || v === undefined || (k === 'provider' && !compat.providerRouting)) continue;
-      if (MERGED_KEYS.includes(k)) {
-        if (isPlainObject(v)) body[k] = { ...(isPlainObject(body[k]) ? body[k] : {}), ...v, ...owned[k] };
-        else if (owned[k] === undefined) body[k] = v;
-        continue;
-      }
-      body[k] = v;
+  applyParams(body, [model.params, request.params], (k) => PROTECTED_KEYS.has(k) || (k === 'provider' && !compat.providerRouting));
+
+  // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo
+  // (`text.verbosity`, `reasoning.summary`… dos params ficam). `model.maxTokens` é o TETO do modelo, não um valor a enviar.
+  if (request.responseSchema) {
+    const { name, schema, strict } = request.responseSchema;
+    if (compat.structuredOutput === 'top_level_json_schema') {
+      body.json_schema = schema; // extensão do llama.cpp: o /v1/responses dele ignora text.format e devolve texto livre
+    } else {
+      fuse(body, 'text', { format: { type: 'json_schema', name: name ?? 'response', strict: strict ?? true, schema } });
     }
   }
-
-  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
-  // `model.maxTokens` é o TETO do modelo, não um valor a enviar.
+  if (request.effort !== undefined && compat.reasoningFormat === 'reasoning_object') fuse(body, 'reasoning', { effort: request.effort });
   if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
   if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
-  if (request.responseSchema && compat.structuredOutput === 'top_level_json_schema') body.json_schema = request.responseSchema.schema;
   if (choice !== undefined) body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', name: choice.name };
 
   return { url, headers, body };
 }
-
-/** @param {unknown} v @returns {v is Record<string, any>} */
-const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /**
  * `toolChoice` do pedido, conferido. Sem `tools` não há o que escolher: `invalid_request`, sem outro alvo.
@@ -317,6 +296,213 @@ function incompleteReason(reason) {
   return 'incomplete';
 }
 
+// ---------------------------------------------------------------------------------------
+// registro de tool calls
+//
+// Servidor que copia o formato troca de identificador entre eventos (`id`, `call_id`, `item_id`
+// do delta, `output_index`), e alguns eventos vêm sem nenhum. Por isso cada chamada tem UM registro,
+// achado por qualquer apelido que o evento traga; apelidos novos são registrados, e dois registros
+// que um evento prove serem a mesma chamada se fundem. Cada registro sai uma vez (`emitted`).
+
+/**
+ * @typedef {object} CallRecord
+ * @property {number} n  ordem de criação
+ * @property {Set<string>} keys  apelidos: id, call_id, item_id e `#output_index`
+ * @property {string} callId @property {string} itemId @property {string} name
+ * @property {string} args  acumulado dos deltas
+ * @property {string} itemArgs  `arguments` de um item (done ou final); vence o acumulado
+ * @property {boolean} closed  recebeu `output_item.done`
+ * @property {boolean} inFinal  casou com um item de `response.output`
+ * @property {boolean} emitted
+ */
+
+/** `arguments` como texto: objeto vira JSON; o que não é texto nem objeto é vazio. @param {unknown} v */
+function argsText(v) {
+  if (typeof v === 'string') return v;
+  if (v && typeof v === 'object') { try { return JSON.stringify(v); } catch { return ''; } }
+  return '';
+}
+
+/** @param {string} text */
+function validJson(text) {
+  try { JSON.parse(text); return true; } catch { return false; }
+}
+
+/** Forma comparável de dois `arguments`: JSON equivalente é igual, mesmo com espaços diferentes. @param {string} text */
+function canonical(text) {
+  try { return JSON.stringify(JSON.parse(text)); } catch { return text.trim(); }
+}
+
+/** Apelidos de um evento ou item: ids como texto, índice como `#n`. @param {...unknown} values */
+function aliasesOf(...values) {
+  /** @type {string[]} */
+  const out = [];
+  for (const v of values) if (typeof v === 'string' && v) out.push(v);
+  return out;
+}
+
+/** @param {unknown} index */
+const indexKey = (index) => (Number.isInteger(index) ? [`#${index}`] : []);
+
+function createCallRegistry() {
+  /** @type {CallRecord[]} */
+  const all = [];
+  /** Apelidos que um evento provou (o registro foi achado por outro apelido, ou nasceu com ele). @type {Map<string, CallRecord>} */
+  const strong = new Map();
+  /** Apelidos que só um palpite por posição ligou ao registro: valem se nada mais forte aparecer. @type {Map<string, CallRecord>} */
+  const weak = new Map();
+  let serial = 0;
+
+  /** @param {CallRecord} rec @param {string[]} keys @param {boolean} [guess] */
+  const bind = (rec, keys, guess = false) => {
+    for (const k of keys) {
+      rec.keys.add(k);
+      if (!guess) strong.set(k, rec);
+      else if (!strong.has(k) && !weak.has(k)) weak.set(k, rec);
+    }
+  };
+
+  /** @param {CallRecord} into @param {CallRecord} from */
+  const merge = (into, from) => {
+    for (const map of [strong, weak]) for (const [k, r] of map) if (r === from) map.set(k, into);
+    for (const k of from.keys) into.keys.add(k);
+    into.callId ||= from.callId;
+    into.itemId ||= from.itemId;
+    into.name ||= from.name;
+    into.args ||= from.args;
+    into.itemArgs ||= from.itemArgs;
+    into.closed ||= from.closed;
+    into.inFinal ||= from.inFinal;
+    into.emitted ||= from.emitted;
+    all.splice(all.indexOf(from), 1);
+  };
+
+  /** @param {string[]} keys @returns {CallRecord} */
+  const create = (keys) => {
+    /** @type {CallRecord} */
+    const rec = { n: serial++, keys: new Set(), callId: '', itemId: '', name: '', args: '', itemArgs: '', closed: false, inFinal: false, emitted: false };
+    all.push(rec);
+    bind(rec, keys);
+    return rec;
+  };
+
+  /** @param {Map<string, CallRecord>} map @param {string[]} keys */
+  const hitsIn = (map, keys) => [...new Set(keys.map((k) => map.get(k)).filter(/** @returns {r is CallRecord} */ (r) => !!r))].sort((a, b) => a.n - b.n);
+
+  /**
+   * Registro de algum dos apelidos. Apelido provado vale mais que palpite; se os provados forem de registros
+   * diferentes, o evento prova que são a mesma chamada, e funde.
+   * @param {string[]} keys @returns {CallRecord|null}
+   */
+  const find = (keys) => {
+    const proven = hitsIn(strong, keys);
+    const hits = proven.length ? proven : hitsIn(weak, keys);
+    if (!hits.length) return null;
+    const [first, ...rest] = hits;
+    for (const r of rest) merge(first, r);
+    if (proven.length) bind(first, keys);
+    return first;
+  };
+
+  /** Os `arguments` que valem para o registro: o item vence o acumulado. @param {CallRecord} rec */
+  const argsOf = (rec) => rec.itemArgs || rec.args;
+
+  /**
+   * O registro e o item podem ser a mesma chamada? Nome e argumentos não se contradizem. O acumulado dos deltas pode
+   * ser só um pedaço dos `arguments` do item.
+   * @param {CallRecord} rec @param {any} item
+   */
+  const compatible = (rec, item) => {
+    if (rec.name && typeof item.name === 'string' && item.name && rec.name !== item.name) return false;
+    const full = argsText(item.arguments).trim();
+    if (!full) return true;
+    if (rec.itemArgs.trim()) return canonical(rec.itemArgs) === canonical(full);
+    const part = rec.args.trim();
+    return !part || canonical(part) === canonical(full) || full.includes(part);
+  };
+
+  /**
+   * Entre os candidatos, primeiro o que tem nome e ainda não tem argumentos (é quem precisa do dado: duas chamadas
+   * iguais não se confundem), depois o que tem nome (um fragmento órfão não tem). @param {(r: CallRecord) => boolean} ok
+   */
+  const firstNamed = (ok) => all.find((r) => r.name && !argsOf(r).trim() && ok(r)) ?? all.find((r) => r.name && ok(r));
+
+  /**
+   * Junta o que um item traz (added, done ou final) ao registro. O primeiro `call_id` e o primeiro nome vencem.
+   * No `added` os argumentos são parciais (os deltas seguem), então entram no acumulado, não como item.
+   * @param {CallRecord} rec @param {any} item @param {{ partial?: boolean }} [opts]
+   */
+  const absorb = (rec, item, { partial = false } = {}) => {
+    if (typeof item.id === 'string' && item.id) rec.itemId ||= item.id;
+    if (typeof item.call_id === 'string' && item.call_id) rec.callId ||= item.call_id;
+    if (typeof item.name === 'string' && item.name) rec.name ||= item.name;
+    const text = argsText(item.arguments);
+    if (!text.trim() || rec.emitted) return;
+    if (partial) rec.args ||= text;
+    else rec.itemArgs = text;
+  };
+
+  /**
+   * Funde os `function_call` de `response.output` nos registros. Item com apelido conhecido casa por ele. O
+   * que sobra (ids que mudaram, ou nenhum) casa por posição: o registro ainda não casado que não contradiz o
+   * item; sem esse, é uma chamada que só o evento final conhece. Por fim, fragmento de argumentos sem dono
+   * (delta com apelido desconhecido) vai para a chamada que o contém.
+   * @param {any[]} items
+   */
+  const mergeFinal = (items) => {
+    /** @type {any[]} */
+    const loose = [];
+    for (const item of items) {
+      const keys = aliasesOf(item.id, item.call_id);
+      const rec = keys.length ? find(keys) : null;
+      if (rec) { absorb(rec, item); rec.inFinal = true; } else loose.push(item);
+    }
+    for (const item of loose) {
+      const keys = aliasesOf(item.id, item.call_id);
+      const rec = firstNamed((r) => !r.inFinal && compatible(r, item)) ?? all.find((r) => !r.inFinal && compatible(r, item)) ?? create([]);
+      bind(rec, keys, true);
+      absorb(rec, item);
+      rec.inFinal = true;
+    }
+    for (const orphan of [...all]) {
+      if (orphan.name || orphan.closed || orphan.inFinal || !orphan.args.trim()) continue;
+      // O fragmento é de uma chamada com nome: sem argumentos ainda, ou com os argumentos inteiros que o contêm.
+      const part = orphan.args.trim();
+      const target = all.find((r) => r !== orphan && r.name && (!argsOf(r).trim() || canonical(argsOf(r)) === canonical(part) || argsOf(r).includes(part)));
+      if (target) merge(target, orphan);
+    }
+  };
+
+  return {
+    all, absorb, argsOf, mergeFinal,
+    /** Registro de um item `added` ou de um delta; senão cria. @param {string[]} keys */
+    locate(keys) { return find(keys) ?? create(keys); },
+    /**
+     * `done`. Achado por apelido, é a chamada dele. Senão: com `output_index` o índice manda (é outra chamada); sem
+     * ele, vale um palpite por posição — a primeira chamada ainda aberta que não contradiz o item (os `done`
+     * chegam na ordem). Os apelidos novos entram como palpite, não como prova.
+     * @param {string[]} keys @param {any} item @param {boolean} hasIndex
+     */
+    locateDone(keys, item, hasIndex) {
+      const hit = find(keys);
+      if (hit) return hit;
+      if (!hasIndex) {
+        const isOpen = (/** @type {CallRecord} */ r) => !r.closed && !r.emitted && compatible(r, item);
+        const named = firstNamed(isOpen);
+        if (named) { bind(named, keys, true); return named; }
+        // Sem nenhum identificador, um `done` que cabe numa chamada já fechada do mesmo nome é o evento repetido.
+        const again = !keys.length && all.find((r) => r.closed && r.name && r.name === item.name && compatible(r, item));
+        if (again) return again;
+        const any = all.find(isOpen); // fragmento órfão que o done completa
+        if (any) { bind(any, keys, true); return any; }
+      }
+      return create(keys);
+    },
+    /** Delta sem nenhum apelido: vai para a chamada aberta mais recente. */
+    latestOpen() { return [...all].reverse().find((r) => !r.closed && !r.emitted) ?? create([]); },
+  };
+}
+
 /**
  * Lê os eventos SSE da Responses API e rende text/reasoning/tool_call; devolve o resumo no `return`.
  * O fim limpo é `response.completed` ou `response.incomplete`; stream sem eles foi cortado e dá `upstream`.
@@ -326,63 +512,36 @@ export async function* parseStream(events, { account, model }) {
   let refused = false;
   /** @type {Ctx} */
   const ctx = { provider: account?.provider, model: model.id };
-  /** item.id (ou output_index) → chamada em andamento @type {Map<string, { callId: string, name: string, args: string }>} */
-  const calls = new Map();
-  /** @type {Map<number, string>} output_index → item.id, para o delta que só traz o índice */
-  const byIndex = new Map();
-  /** @type {Set<string>} chamadas já emitidas */
-  const closed = new Set();
-  /** Sem argumentos no output_item.done: espera o evento final. @type {{ key: string, item: any }[]} */
-  const deferred = [];
+  const registry = createCallRegistry();
   let sawCall = false;
   let emitted = false;
+  /** Saiu texto (delta ou recusa): o texto do evento final só entra quando nada disso saiu. */
+  let textOut = false;
   let callCount = 0;
   /** @type {any} */ let final = null;
   /** @type {'completed'|'incomplete'|null} */ let kind = null;
 
-  /** @param {any} ev @param {string|undefined} itemId */
-  const keyOf = (ev, itemId) => itemId ?? byIndex.get(ev.output_index) ?? `#${ev.output_index}`;
-  /** @param {string} key */
-  const callFor = (key) => {
-    let c = calls.get(key);
-    if (!c) { c = { callId: '', name: '', args: '' }; calls.set(key, c); }
-    return c;
-  };
+  /** @param {string} message @param {unknown} [body] */
+  const upstream = (message, body) => new ProviderError({ type: 'upstream', ...ctx, emitted, ...(body !== undefined ? { body } : {}), message: `${ctx.provider}/${ctx.model}: ${message}` });
 
   /**
-   * Fecha uma chamada: o item final vence o acumulado. Servidor que copia o formato pode trocar
-   * de identificador entre eventos, então a chamada é achada por qualquer um deles, e todos ficam
-   * registrados: a mesma chamada nunca sai duas vezes. Com JSON incompleto dá erro: emitir
-   * `arguments` inválido faria o chamador executar a ferramenta com lixo.
-   * @param {string} key @param {any} item
+   * Emite o registro, uma vez. Com JSON incompleto dá erro: emitir `arguments` inválido faria o chamador
+   * executar a ferramenta com lixo.
+   * @param {CallRecord} rec
    */
-  const closeCall = (key, item) => {
-    /** @type {{ callId: string, name: string, args: string }} */
-    let c = { callId: '', name: '', args: '' };
-    for (const [k, v] of [...calls]) {
-      if (k === key || k === item.id || (v.callId && v.callId === item.call_id)) { c = { callId: v.callId || c.callId, name: v.name || c.name, args: v.args || c.args }; calls.delete(k); closed.add(k); }
-    }
-    closed.add(key);
-    for (const id of [item.id, item.call_id, c.callId]) if (id) closed.add(id);
-    const name = (typeof item.name === 'string' && item.name) || c.name;
-    const args = (typeof item.arguments === 'string' && item.arguments) || c.args;
-    if (!name) {
-      throw new ProviderError({ type: 'upstream', ...ctx, body: item, message: `${ctx.provider}/${ctx.model}: function_call sem nome no stream` });
-    }
-    const text = args.trim() ? args : '{}';
-    try { JSON.parse(text); } catch {
-      throw new ProviderError({ type: 'upstream', ...ctx, body: item, message: `${ctx.provider}/${ctx.model}: tool call cortada (${name}, arguments não é JSON)` });
-    }
+  const take = (rec) => {
+    const raw = registry.argsOf(rec);
+    const body = { id: rec.itemId, call_id: rec.callId, name: rec.name, arguments: raw };
+    if (!rec.name) throw upstream('function_call sem nome no stream', body);
+    const text = raw.trim() ? raw : '{}';
+    if (!validJson(text)) throw upstream(`tool call cortada (${rec.name}, arguments não é JSON)`, body);
+    rec.emitted = true;
     sawCall = true;
     emitted = true;
-    const id = (typeof item.call_id === 'string' && item.call_id) || c.callId || item.id || `call_${callCount}`;
+    const id = rec.callId || rec.itemId || `call_${callCount}`;
     callCount += 1;
-    return /** @type {const} */ ({ type: 'tool_call', id, name, arguments: text });
+    return /** @type {const} */ ({ type: 'tool_call', id, name: rec.name, arguments: text });
   };
-  /** @param {any} item */
-  const isClosed = (item) => (item.id !== undefined && closed.has(item.id)) || (item.call_id !== undefined && closed.has(item.call_id));
-  /** A chamada tem algum argumento até aqui? Sem nenhum, só o evento final diz se foi cortada. @param {string} key @param {any} item */
-  const hasArgs = (key, item) => (typeof item.arguments === 'string' && item.arguments.trim() !== '') || !!calls.get(key)?.args.trim();
 
   for await (const ev of events) {
     const data = ev.data.trim();
@@ -397,7 +556,7 @@ export async function* parseStream(events, { account, model }) {
 
     switch (type) {
       case 'response.output_text.delta':
-        if (typeof chunk.delta === 'string' && chunk.delta) { emitted = true; yield { type: 'text', text: chunk.delta }; }
+        if (typeof chunk.delta === 'string' && chunk.delta) { emitted = true; textOut = true; yield { type: 'text', text: chunk.delta }; }
         break;
 
       // O resumo do raciocínio (OpenAI) e o raciocínio bruto (modelos abertos, como o gpt-oss no llama.cpp).
@@ -408,30 +567,33 @@ export async function* parseStream(events, { account, model }) {
 
       case 'response.output_item.added':
         if (chunk.item?.type === 'function_call') {
-          const key = keyOf(chunk, chunk.item.id);
-          if (typeof chunk.output_index === 'number') byIndex.set(chunk.output_index, key);
-          const c = callFor(key);
-          if (typeof chunk.item.call_id === 'string') c.callId = chunk.item.call_id;
-          if (typeof chunk.item.name === 'string') c.name = chunk.item.name;
-          if (typeof chunk.item.arguments === 'string') c.args = chunk.item.arguments;
+          const rec = registry.locate([...aliasesOf(chunk.item.id, chunk.item.call_id), ...indexKey(chunk.output_index)]);
+          registry.absorb(rec, chunk.item, { partial: true });
         }
         break;
 
-      case 'response.function_call_arguments.delta':
-        if (typeof chunk.delta === 'string') callFor(keyOf(chunk, chunk.item_id)).args += chunk.delta;
+      case 'response.function_call_arguments.delta': {
+        if (typeof chunk.delta !== 'string' || !chunk.delta) break; // delta vazio não diz nada: não abre registro
+        const keys = [...aliasesOf(chunk.item_id, chunk.call_id), ...indexKey(chunk.output_index)];
+        const rec = keys.length ? registry.locate(keys) : registry.latestOpen();
+        if (!rec.emitted) rec.args += chunk.delta;
         break;
+      }
 
       case 'response.output_item.done':
         if (chunk.item?.type === 'function_call') {
-          const key = keyOf(chunk, chunk.item.id);
-          if (hasArgs(key, chunk.item)) yield closeCall(key, chunk.item);
-          else deferred.push({ key, item: chunk.item });
+          const index = indexKey(chunk.output_index);
+          const rec = registry.locateDone([...aliasesOf(chunk.item.id, chunk.item.call_id), ...index], chunk.item, index.length > 0);
+          registry.absorb(rec, chunk.item);
+          rec.closed = true;
+          // Sem argumento nenhum até aqui, só o evento final diz se foi corte ou ferramenta sem parâmetros.
+          if (!rec.emitted && registry.argsOf(rec).trim()) yield take(rec);
         }
         break;
 
       // Recusa do modelo: o texto chega como resposta, e o fim diz que foi recusa.
       case 'response.refusal.delta':
-        if (typeof chunk.delta === 'string' && chunk.delta) { emitted = true; refused = true; yield { type: 'text', text: chunk.delta }; }
+        if (typeof chunk.delta === 'string' && chunk.delta) { emitted = true; refused = true; textOut = true; yield { type: 'text', text: chunk.delta }; }
         break;
 
       case 'response.completed':
@@ -458,20 +620,22 @@ export async function* parseStream(events, { account, model }) {
   if (!kind) {
     throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem evento final (response.completed, response.incomplete ou response.failed)` });
   }
-  // Chamada sem nenhum argumento e resposta cortada: é o corte, não uma ferramenta sem parâmetros.
-  if (kind === 'incomplete' && deferred.length) {
-    throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: tool call cortada pelo limite, sem argumentos (${deferred[0].item.name ?? 'sem nome'})` });
-  }
-  for (const { key, item } of deferred) if (!isClosed(item)) yield closeCall(key, item);
-  // Servidor que copia o formato pode não mandar output_item.done: o dado está no evento final.
+
+  // O evento final traz tudo de novo: funde nos registros antes de emitir o que falta.
   const finalOutput = Array.isArray(final.output) ? final.output : [];
-  for (const item of finalOutput) {
-    if (item?.type !== 'function_call' || isClosed(item)) continue;
-    const key = item.id ?? item.call_id;
-    if (kind === 'incomplete' && !hasArgs(key, item)) {
-      throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: tool call cortada pelo limite, sem argumentos (${item.name ?? 'sem nome'})` });
+  registry.mergeFinal(finalOutput.filter((/** @type {any} */ item) => item?.type === 'function_call'));
+
+  // Servidor que copia o formato pode não ter mandado o texto em delta: ele está no item final.
+  if (!textOut) {
+    for (const item of finalOutput) {
+      for (const part of Array.isArray(item?.content) ? item.content : []) {
+        if (part?.type !== 'refusal' && typeof part?.text === 'string' && part.text) {
+          emitted = true;
+          textOut = true;
+          yield { type: 'text', text: part.text };
+        }
+      }
     }
-    yield closeCall(key, item);
   }
   // Recusa que só vem no item final, sem delta.
   if (!refused) {
@@ -485,11 +649,20 @@ export async function* parseStream(events, { account, model }) {
       }
     }
   }
-  // Chamada aberta sem fim nenhum não some em silêncio.
-  for (const [k, c] of calls) {
-    if (closed.has(k) || (c.callId && closed.has(c.callId))) continue;
-    throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: tool call sem fim no stream (${c.name || 'sem nome'})` });
+
+  // O que ainda não saiu, na ordem. Chamada sem argumento nenhum: cortada se a resposta foi cortada;
+  // senão, é ferramenta sem parâmetros — desde que o stream a tenha fechado (done ou item final).
+  for (const rec of [...registry.all]) {
+    if (rec.emitted) continue;
+    // Registro sem nome, sem argumentos e que nenhum evento fechou: sobra de um evento sem dado, não é chamada.
+    if (!rec.name && !rec.closed && !rec.inFinal && !registry.argsOf(rec).trim()) continue;
+    if (!registry.argsOf(rec).trim()) {
+      if (kind === 'incomplete') throw upstream(`tool call cortada pelo limite, sem argumentos (${rec.name || 'sem nome'})`);
+      if (!rec.closed && !rec.inFinal) throw upstream(`tool call sem fim no stream (${rec.name || 'sem nome'})`);
+    }
+    yield take(rec);
   }
+
   const finishReason = kind === 'incomplete'
     ? incompleteReason(final.incomplete_details?.reason)
     : sawCall ? 'tool_calls' : refused ? 'content_filter' : 'stop';
