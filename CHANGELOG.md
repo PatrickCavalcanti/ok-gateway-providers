@@ -2,7 +2,7 @@
 
 Versão semântica; `0.x` enquanto a API se acomoda — cada consumidor fixa a tag exata.
 
-## 0.1.0 — ainda sem tag
+## 0.1.0 — 2026-11-03
 
 Primeira versão: o núcleo (T1.1).
 

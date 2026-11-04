@@ -2,8 +2,8 @@
 
 | Área | Pendência | Para |
 |---|---|---|
-| entrega | Rodar `scripts/smoke.mjs` com `OPENROUTER_API_KEY` e `ANTHROPIC_API_KEY` (texto, tool call, imagem) e só então criar a tag `v0.1.0` | dono |
-| repositório | O branch padrão no GitHub nasceu como `claude/awesome-rubin-mmewif` (primeiro push); criar `main` a partir dele e trocar o padrão | dono |
+| entrega | ~~Rodar o smoke e criar a tag~~ — feito em 2026-11-03: OpenRouter (`openai/gpt-5.4-mini`) e Anthropic (`claude-haiku-5-5`) passaram em texto, tool call, imagem, PDF e saída estruturada; tag `v0.1.0` | feito |
+| repositório | ~~Branch padrão `claude/awesome-rubin-mmewif`~~ — feito em 2026-11-03: padrão `main`. A branch antiga continua no GitHub, igual a um commit antes de `main`; apagar quando quiser | dono |
 | fixtures | As fixtures foram escritas à mão no formato real; regravar as principais com `scripts/record-fixture.mjs` contra provedores de verdade | T1.2 |
 | openai-completions | `x_groq.usage` lido sem evidência local (formato público do Groq); confirmar no smoke | smoke |
 | openai-completions | `prompt_cache_breakpoint` em `user` e `tool` (o Gateway só usou no system); confirmar no tráfego real | T2.2 |

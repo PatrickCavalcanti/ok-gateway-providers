@@ -1,0 +1,4 @@
+# As fixtures são bytes de resposta de provedor; os testes as cortam por "
+
+".
+test/fixtures/** text eol=lf
