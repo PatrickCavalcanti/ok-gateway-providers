@@ -191,6 +191,10 @@ forma (`chat text+image->text`).
 
 ## Outras operações
 
+Gerar imagem tem primeiro byte padrão de 180 s, porque a resposta só vem no fim. A conta e o pedido
+podem mudar isso com `timeouts`.
+
+
 São chamada única: devolvem uma `Promise`, sem eventos. Cada operação tem o próprio modelo, com a
 operação em `operations`; modelo sem ela, ou fio que não a implementa, dá `unsupported` antes do
 fetch. Todas aceitam `signal` e `timeouts`, que vencem os da conta, e resolvem com `usage`, `cost` e

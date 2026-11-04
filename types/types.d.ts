@@ -437,5 +437,5 @@ export type ApiModule = {
     }) => AsyncGenerator<Exclude<ChatEvent, {
         type: "end";
     }>, StreamSummary, undefined>;
-    operations?: Partial<Record<"embeddings" | "decision" | "transcription" | "speech" | "image-generation", OperationModule>> | undefined;
+    operations?: Partial<Record<"image-generation" | "embeddings" | "decision" | "transcription" | "speech", OperationModule>> | undefined;
 };

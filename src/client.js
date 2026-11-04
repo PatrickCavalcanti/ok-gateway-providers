@@ -5,7 +5,7 @@
 // criação; os eventos esperam numa fila. A lib não repete chamada nem guarda nada.
 
 import { ProviderError, errorFromStatus, unsupported } from './errors.js';
-import { createDeadline } from './timeouts.js';
+import { createDeadline, OPERATION_TIMEOUTS } from './timeouts.js';
 import { readSSE } from './sse.js';
 import { resolveCompat } from './compat.js';
 import { computeCost } from './cost.js';
@@ -260,7 +260,7 @@ async function runOperation(operation, { account, model, request, doFetch }) {
   let generationId;
   try {
     assertSignal(request?.signal, ctx);
-    deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: request?.signal });
+    deadline = createDeadline({ timeouts: { ...OPERATION_TIMEOUTS[operation], ...account.timeouts, ...request?.timeouts }, signal: request?.signal });
     if (!Array.isArray(model.operations) || !model.operations.includes(operation)) {
       throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara a operação ${operation}`, ctx);
     }
