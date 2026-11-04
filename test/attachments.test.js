@@ -110,3 +110,14 @@ test('assertMediaSupported: texto passa; a mensagem diz provedor/modelo e o moti
     (e) => unsupportedErr(e) && /acme\/acme\/m/.test(e.message) && /image/.test(e.message) && e.provider === 'acme' && e.model === 'acme/m',
   );
 });
+
+test('inline_data aceita áudio e vídeo em base64', () => {
+  const m = { id: 'm', input: ['audio', 'video'], transport: { audio: 'inline_data', video: 'inline_data' } };
+  assertMediaSupported({ type: 'audio', data: 'QQ==', format: 'mp3' }, m);
+  assertMediaSupported({ type: 'video', data: 'QQ==', mime: 'video/mp4' }, m);
+});
+test('inline_data recusa vídeo por URL e vídeo sem mime', () => {
+  const m = { id: 'm', input: ['video'], transport: { video: 'inline_data' } };
+  assert.throws(() => assertMediaSupported({ type: 'video', url: 'https://x/v.mp4' }, m), (e) => e.type === 'unsupported');
+  assert.throws(() => assertMediaSupported({ type: 'video', data: 'QQ==' }, m), (e) => e.type === 'invalid_request');
+});

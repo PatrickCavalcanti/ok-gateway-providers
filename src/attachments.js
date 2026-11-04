@@ -82,19 +82,19 @@ export function assertMediaSupported(part, model, ctx = {}) {
   if (part.type === 'audio') {
     // Sem declaração, o único transporte conhecido é `input_audio`; `null` desliga.
     const t = transport.audio === undefined ? 'input_audio' : transport.audio;
-    if (t !== 'input_audio') throw fail('o modelo não aceita áudio no transporte declarado (transport.audio)');
+    if (t !== 'input_audio' && t !== 'inline_data') throw fail('o modelo não aceita áudio no transporte declarado (transport.audio)');
     if (!part.data || !part.format) throw invalid(ctx, m, 'parte de áudio precisa de data (base64) e format');
     return;
   }
 
   // vídeo: não há transporte padrão — o dono do modelo precisa declarar.
   const t = transport.video;
-  if (t !== 'input_video' && t !== 'video_url') {
-    throw fail('o modelo não declara transport.video (input_video ou video_url); vídeo não é enviado sem isso');
+  if (t !== 'input_video' && t !== 'video_url' && t !== 'inline_data') {
+    throw fail('o modelo não declara transport.video (input_video, video_url ou inline_data); vídeo não é enviado sem isso');
   }
   if (part.data === undefined && part.url === undefined) throw invalid(ctx, m, 'parte de vídeo sem data nem url');
-  if (t === 'input_video') {
-    if (part.data === undefined) throw fail('transporte input_video só aceita vídeo em base64 (data), não URL');
+  if (t === 'input_video' || t === 'inline_data') {
+    if (part.data === undefined) throw fail(`transporte ${t} só aceita vídeo em base64 (data), não URL`);
     if (!part.mime) throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
   } else if (part.data !== undefined && !part.data.startsWith('data:') && !part.mime) {
     throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
