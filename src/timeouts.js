@@ -12,7 +12,7 @@ export const DEFAULT_TIMEOUTS = Object.freeze({ firstByteMs: 60_000, idleMs: 60_
  * em 51 s e além de 60 s no OpenRouter (2026-11-04).
  * @type {Readonly<Record<string, Timeouts>>}
  */
-export const OPERATION_TIMEOUTS = Object.freeze({ 'image-generation': Object.freeze({ firstByteMs: 180_000 }) });
+export const OPERATION_TIMEOUTS = Object.freeze({ 'image-generation': Object.freeze({ firstByteMs: 180_000, idleMs: 180_000 }) });
 /** @typedef {null|'aborted'|'first_byte'|'idle'|'total'} DeadlineReason */
 
 /**

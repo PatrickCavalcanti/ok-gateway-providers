@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createClient } from '../src/client.js';
-import { errorFromStatus, ProviderError } from '../src/errors.js';
+import { diagnosticFields, errorFromStatus, ProviderError } from '../src/errors.js';
 import '../src/index.js';
 
 /** Corpo de erro do OpenRouter (HTTP 429 de um provedor por trás). */
@@ -98,4 +98,11 @@ test('fala: o id da geração vai no resultado, e continua em usage.raw (spec §
   const r = await createClient({ account: completionsAccount, model: chatModel, fetch: respond(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/mpeg', 'x-generation-id': 'gen-tts' } }) }).speak({ text: 'oi' });
   assert.equal(r.generationId, 'gen-tts');
   assert.deepEqual(r.usage.raw, { generationId: 'gen-tts' });
+});
+
+test('campos de diagnóstico têm teto de 200 caracteres', () => {
+  const big = 'x'.repeat(5000);
+  const d = diagnosticFields({ error: { code: big, type: big, metadata: { provider_name: big } } });
+  assert.equal(d.code.length, 200);
+  assert.equal(d.providerName.length, 200);
 });

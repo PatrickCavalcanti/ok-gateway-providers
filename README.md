@@ -8,7 +8,7 @@ Fala com provedores de IA a partir de três entradas: uma **conta**, um **modelo
   planejamento de cache são do cliente. A lib dá o que ele precisa para decidir:
   `retryOther` e `emitted` no erro.
 - Fios: `openai-completions` (OpenAI em estilo chat, OpenRouter, Groq, Ollama `/v1`,
-  Inception, DeepSeek, llama.cpp, Igris Gateway), `openai-responses`, `anthropic-messages` e
+  Inception, DeepSeek, llama.cpp, Igris Gateway), `anthropic-messages` e
   `google-generative-ai`.
 - Operações: `chat`, com tools, saída estruturada, raciocínio e anexos; embeddings,
   transcrição, fala, geração de imagem e decisão.
@@ -91,7 +91,7 @@ e objeto do corpo (`output_config`, `thinking`, `generationConfig`, `reasoning`,
 campo a campo com o explícito vencendo.
 
 `content` é string ou partes: `{ type: 'text', text, cache? }`,
-`{ type: 'image', data | url, mime, cache? }`, `{ type: 'audio', data, format }`,
+`{ type: 'image', data | url, mime, cache? }` (a marca só tem efeito na Anthropic), `{ type: 'audio', data, format }`,
 `{ type: 'video', data | url, mime }`, `{ type: 'file', data | url, mime, name?, cache? }`
 (PDF, texto e outros documentos).
 
@@ -119,7 +119,7 @@ no stream e sem marcador de cache. Ligue o que o endpoint suporta.
 | `supportsDeveloperRole`, `supportsStore`, `supportsTemperature` | bool |
 | `reasoningFormat` | `reasoning_effort` · `reasoning_object` · `anthropic_thinking` · `none` |
 | `thinkingByDefault` | bool (Anthropic) |
-| `structuredOutput` | `response_format` · `top_level_json_schema` (llama.cpp) · `output_config` (Anthropic) · `response_json_schema` (Gemini) · `text_format` (Responses) · `none` |
+| `structuredOutput` | `response_format` · `top_level_json_schema` (llama.cpp) · `output_config` (Anthropic) · `response_json_schema` (Gemini) |
 | `usageInStream` | bool (`stream_options.include_usage`) |
 | `providerRouting` | bool: aceita o objeto `provider` do OpenRouter em `params` |
 | `cacheMarker` | `cache_control` · `prompt_cache_breakpoint` · `none` |
@@ -191,14 +191,14 @@ forma (`chat text+image->text`).
 
 ## Outras operações
 
-Gerar imagem tem primeiro byte padrão de 180 s, porque a resposta só vem no fim. A conta e o pedido
-podem mudar isso com `timeouts`.
-
 
 São chamada única: devolvem uma `Promise`, sem eventos. Cada operação tem o próprio modelo, com a
 operação em `operations`; modelo sem ela, ou fio que não a implementa, dá `unsupported` antes do
 fetch. Todas aceitam `signal` e `timeouts`, que vencem os da conta, e resolvem com `usage`, `cost` e
 `generationId?`.
+
+Gerar imagem tem 180 s de primeiro byte e de inatividade por padrão, porque a resposta só vem no
+fim. O `timeouts` da conta vence esse padrão: uma conta com `firstByteMs: 60_000` corta imagem em 60 s.
 
 ```js
 import { createClient } from 'ok-gateway-providers';
@@ -213,22 +213,25 @@ const account = {
   compat: { imagePath: '/images', imageResponseFormat: null, decisionPath: '../alpha/decisions' },
 };
 
-const client = (id, operations, input, output) => createClient({ account, model: { id, operations, input, output } });
+const openai = { id: 'openai', provider: 'openai', api: 'openai-completions', baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY };
+const groq = { id: 'groq', provider: 'groq', api: 'openai-completions', baseUrl: 'https://api.groq.com/openai/v1', apiKey: process.env.GROQ_API_KEY, compat: { sttResponseFormat: 'verbose_json' } };
 
-const embedder = client('openai/text-embedding-3-small', ['embeddings'], ['text'], ['embeddings']);
+const client = (id, operations, input, output, conta = account) => createClient({ account: conta, model: { id, operations, input, output } });
+
+const embedder = client('text-embedding-3-small', ['embeddings'], ['text'], ['embeddings'], openai);
 const { vectors } = await embedder.embed({ texts: ['olá'], dimensions: 768 });
 
-const transcriber = client('openai/whisper-1', ['transcription'], ['audio'], ['text']);
+const transcriber = client('whisper-large-v3-turbo', ['transcription'], ['audio'], ['text'], groq);
 const bytes = new Uint8Array([0x49, 0x44, 0x33]);
 const { text, durationSeconds } = await transcriber.transcribe({ audio: bytes, mime: 'audio/mpeg', filename: 'fala.mp3', language: 'pt' });
 
-const speaker = client('openai/gpt-4o-mini-tts', ['speech'], ['text'], ['audio']);
+const speaker = client('tts-1', ['speech'], ['text'], ['audio'], openai);
 const { audio, contentType } = await speaker.speak({ text: 'Olá', voice: 'onyx', format: 'mp3', instructions: 'Fale devagar', speed: 1.1 });
 
-const painter = client('google/gemini-3-pro-image', ['image-generation'], ['text'], ['image']);
+const painter = client('qwen/qwen-image-3', ['image-generation'], ['text'], ['image']);
 const { images } = await painter.generateImage({ prompt: 'um gato', params: { n: 1 } });
 
-const decider = client('jev/decisor', ['decision'], ['text'], ['text']);
+const decider = client('typesafe/jev-1.13', ['decision'], ['text'], ['text']);
 const { answers } = await decider.decide({
   state: { mensagem: 'pode mandar o relatório?' },
   questions: { pronto: { type: 'noul', instructions: 'O usuário autorizou o envio?', criteria: { true: 'autorizou', false: 'não autorizou' } } },
@@ -259,7 +262,6 @@ pacote.
 |---|---|---|
 | OpenRouter | `openai-completions` | `{ usageInStream: true, providerRouting: true, reasoningFormat: 'reasoning_object', imagePath: '/images', imageResponseFormat: null, decisionPath: '../alpha/decisions' }` |
 | OpenAI, estilo chat | `openai-completions` | `{ usageInStream: true, maxTokensField: 'max_completion_tokens', reasoningFormat: 'reasoning_effort', structuredOutput: 'response_format', ttsDefaultVoice: 'onyx', ttsDefaultFormat: 'mp3' }` |
-| OpenAI, Responses | `openai-responses` | `{ structuredOutput: 'text_format', reasoningFormat: 'reasoning_object' }` |
 | Groq | `openai-completions` | `{ sttResponseFormat: 'verbose_json' }` |
 | TypeSafe | `openai-completions` | `{ decisionPath: 'systemone' }` |
 | Anthropic | `anthropic-messages` | padrão. No modelo da geração 5: `{ thinkingByDefault: true, supportsTemperature: false }` |
@@ -269,12 +271,15 @@ No `whisper-1`, o modelo sobrescreve com `{ sttResponseFormat: 'verbose_json' }`
 `anthropic-version` da conta (em `headers` ou em `compat.headers`) vence o padrão da lib.
 
 `effort` e `reasoning.maxTokens` não vão juntos: o OpenRouter recusa, e a lib dá `invalid_request`.
+`effort` explícito com `reasoning.max_tokens` vindo de `params` tira o `max_tokens`: o pedido vence
+o padrão, e o teto de raciocínio do padrão some junto.
 
 ## Devolver o histórico
 
 Para continuar uma conversa com tools, devolva o raciocínio assinado e os `providerData` que
 vieram. `signature` fecha um bloco de raciocínio. Cada fio ignora ou aproveita o que recebe, então
-trocar de provedor no meio da conversa não quebra o corpo. O texto de cada bloco vai numa parte só.
+o raciocínio de um provedor não vai para outro. Os ids `gemini-tc-{n}` se repetem entre respostas do
+Gemini: cuidado ao levar uma conversa dele para a Anthropic, que pode recusar ids repetidos. O texto de cada bloco vai numa parte só.
 
 ```js
 const content = [];

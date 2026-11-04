@@ -29,6 +29,8 @@
 8. **`toolName`** na mensagem `tool` e **resultados de tool seguidos num turno só** no Gemini.
 9. **Catálogo:** o vocabulário real de saída do OpenRouter é `speech`, `transcription`, `decisions`, `rerank`, `video`. Os três primeiros viram operação; os outros, nenhuma.
 
+10. **`openai-responses` saiu da `v0.2.0`** (revisões 1 e 2 do conjunto): o código fica em `feature/openai-responses` e volta com a E4. A Fase 5 não entra nesta tag.
+
 ---
 
 ## Mapa de quem faz

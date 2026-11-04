@@ -27,7 +27,10 @@ const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 /** @param {unknown} v @returns {string|undefined} */
 const text = (v) => (typeof v === 'string' && v ? v : undefined);
 /** @param {unknown} v @returns {string|number|undefined} */
-const codeOf = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : text(v));
+const codeOf = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : capped(text(v)));
+
+/** Campo de diagnóstico tem teto: o corpo é do provedor. @param {string|undefined} v */
+const capped = (v) => (v && v.length > 200 ? v.slice(0, 200) : v);
 
 /**
  * @typedef {object} Diagnostic
@@ -55,8 +58,8 @@ export function diagnosticFields(body) {
   const md = isRecord(e.metadata) ? e.metadata : {};
   const code = codeOf(e.code);
   const providerCode = codeOf(md.provider_code);
-  const errorType = text(md.error_type) ?? (e === b ? undefined : text(e.type) ?? text(e.status));
-  const providerName = text(md.provider_name);
+  const errorType = capped(text(md.error_type) ?? (e === b ? undefined : text(e.type) ?? text(e.status)));
+  const providerName = capped(text(md.provider_name));
   return {
     ...(code !== undefined ? { code } : {}),
     ...(errorType ? { errorType } : {}),

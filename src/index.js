@@ -4,12 +4,10 @@ import { registerApi } from './client.js';
 import * as openaiCompletions from './apis/openai-completions.js';
 import * as anthropicMessages from './apis/anthropic-messages.js';
 import * as googleGenerativeAi from './apis/google-generative-ai.js';
-import * as openaiResponses from './apis/openai-responses.js';
 
 registerApi(openaiCompletions);
 registerApi(anthropicMessages);
 registerApi(googleGenerativeAi);
-registerApi(openaiResponses);
 
 export { createClient, registerApi, getApi, listApis } from './client.js';
 /** Tipos públicos (Account, Model, ChatRequest, ChatEvent, Usage, Cost…). */

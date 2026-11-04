@@ -70,20 +70,6 @@ test('openai-completions: params do modelo e da chamada não escondem o explíci
   assert.deepEqual(body.reasoning, { effort: 'low', exclude: true });
 });
 
-test('openai-responses: effort e schema explícitos fundem em reasoning e text sem perder o resto', () => {
-  const body = build('openai-responses', { reasoningFormat: 'reasoning_object', structuredOutput: 'text_format' },
-    { reasoning: { effort: 'low', summary: 'auto' }, text: { format: { type: 'text' }, verbosity: 'low' }, max_output_tokens: 1, tool_choice: 'none' },
-    { tools, effort: 'high', responseSchema: { schema }, maxTokens: 50, toolChoice: 'required' });
-  assert.deepEqual(body.reasoning, { effort: 'high', summary: 'auto' });
-  assert.deepEqual(body.text, { format: { type: 'json_schema', name: 'response', strict: true, schema }, verbosity: 'low' });
-  assert.deepEqual([body.max_output_tokens, body.tool_choice], [50, 'required']);
-});
-
-test('openai-responses: sem explícito, params.reasoning e params.text passam', () => {
-  const body = build('openai-responses', {}, { reasoning: { summary: 'auto' }, text: { verbosity: 'low' } });
-  assert.deepEqual([body.reasoning, body.text], [{ summary: 'auto' }, { verbosity: 'low' }]);
-});
-
 test('embeddings: dimensions do pedido vence params.dimensions', () => {
   const account = { id: 'x', provider: 'p', api: 'openai-completions', baseUrl: 'https://x/v1' };
   const model = { id: 'm', operations: ['embeddings'], input: ['text'], output: ['embeddings'] };

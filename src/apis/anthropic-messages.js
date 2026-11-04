@@ -84,11 +84,11 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     fuse(body, 'thinking', { type: adaptive ? 'adaptive' : 'disabled' });
     delete body.thinking.budget_tokens; // só o thinking `enabled` tem orçamento; sobra do params invalidaria o pedido
   }
-  fuse(body, 'output_config', {
+  const outputConfig = {
     ...(compat.reasoningFormat === 'anthropic_thinking' && adaptive ? { effort } : {}),
     ...(request.responseSchema ? { format: { type: 'json_schema', schema: request.responseSchema.schema } } : {}),
-  });
-  if (isPlainObject(body.output_config) && !Object.keys(body.output_config).length) delete body.output_config;
+  };
+  if (Object.keys(outputConfig).length) fuse(body, 'output_config', outputConfig);
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
   // Modelo que pensa por padrão responde 400 a `temperature`, mesmo com `effort: 'none'`
   // (o Gateway nunca a manda para eles); com o adaptive ligado ela também é recusada.

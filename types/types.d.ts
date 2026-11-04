@@ -7,7 +7,7 @@ export type Compat = {
     supportsTemperature?: boolean | undefined;
     reasoningFormat?: "none" | "reasoning_effort" | "reasoning_object" | "anthropic_thinking" | undefined;
     thinkingByDefault?: boolean | undefined;
-    structuredOutput?: "none" | "response_format" | "top_level_json_schema" | "output_config" | "response_json_schema" | "text_format" | undefined;
+    structuredOutput?: "none" | "response_format" | "top_level_json_schema" | "output_config" | "response_json_schema" | undefined;
     usageInStream?: boolean | undefined;
     providerRouting?: boolean | undefined;
     cacheMarker?: "none" | "cache_control" | "prompt_cache_breakpoint" | undefined;

@@ -13,7 +13,7 @@
  * @property {boolean} [supportsTemperature]
  * @property {'reasoning_effort'|'reasoning_object'|'anthropic_thinking'|'none'} [reasoningFormat]
  * @property {boolean} [thinkingByDefault]
- * @property {'response_format'|'top_level_json_schema'|'output_config'|'response_json_schema'|'text_format'|'none'} [structuredOutput]
+ * @property {'response_format'|'top_level_json_schema'|'output_config'|'response_json_schema'|'none'} [structuredOutput]
  * @property {boolean} [usageInStream]
  * @property {boolean} [providerRouting]
  * @property {'cache_control'|'prompt_cache_breakpoint'|'none'} [cacheMarker]
