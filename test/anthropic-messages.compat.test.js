@@ -233,3 +233,10 @@ test('parseStream: SSE com JSON quebrado é upstream', async () => {
   const gen = parseStream(events(), { account, model, compat: resolveCompat(account, model) });
   await assert.rejects(gen.next(), (e) => e.type === 'upstream' && /JSON inválido/.test(e.message));
 });
+
+test('cachedContent é do Gemini: aqui dá unsupported, antes do fetch', () => {
+  assert.throws(
+    () => build({ messages: hi, cachedContent: 'cachedContents/abc' }),
+    (e) => e.name === 'ProviderError' && e.type === 'unsupported' && e.retryOther === true,
+  );
+});

@@ -122,6 +122,7 @@
  * @property {Message[]} messages
  * @property {Tool[]} [tools]
  * @property {ResponseSchema} [responseSchema]
+ * @property {string} [cachedContent]  referência a um `cachedContents/…` do Gemini; os outros fios dão `unsupported`
  * @property {Effort} [effort]
  * @property {number} [maxTokens]
  * @property {number} [temperature]

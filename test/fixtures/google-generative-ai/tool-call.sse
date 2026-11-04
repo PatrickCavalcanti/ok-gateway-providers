@@ -1,0 +1,4 @@
+data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "clima","args": {"cidade": "Campo Grande"}}}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 40,"totalTokenCount": 40,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 40}]},"modelVersion": "gemini-3.5-flash","responseId": "c3aWaa2tLtOajrEPpMXd4Qs"}
+
+data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "hora","args": {}}}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 40,"candidatesTokenCount": 9,"totalTokenCount": 49,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 40}],"candidatesTokensDetails": [{"modality": "TEXT","tokenCount": 9}]},"modelVersion": "gemini-3.5-flash","responseId": "c3aWaa2tLtOajrEPpMXd4Qs"}
+

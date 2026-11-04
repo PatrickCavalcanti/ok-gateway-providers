@@ -30,6 +30,9 @@ const PROTECTED = new Set(['model', 'messages', 'system', 'stream', 'tools']);
 export function buildRequest({ account, model, compat, request, apiKey }) {
   /** @type {Ctx} */
   const ctx = { provider: account.provider, model: model.id };
+  if (request.cachedContent !== undefined) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: cachedContent só existe no fio google-generative-ai`, ctx);
+  }
 
   const system = buildSystem(request.system, compat);
   if (!Array.isArray(request.messages)) throw invalid('messages precisa ser uma lista', ctx);

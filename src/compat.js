@@ -37,6 +37,7 @@ export const DEFAULT_COMPAT = Object.freeze({
     usageInStream: true,
     cacheMarker: 'cache_control',
   }),
+  'google-generative-ai': Object.freeze({ ...BASE, structuredOutput: 'response_json_schema', usageInStream: true }),
 });
 
 /**

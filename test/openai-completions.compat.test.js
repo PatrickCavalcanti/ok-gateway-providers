@@ -249,3 +249,10 @@ test('mídia em assistant/tool dá unsupported (mídia só vai em user)', () => 
     );
   }
 });
+
+test('cachedContent é do Gemini: aqui dá unsupported, antes do fetch', () => {
+  assert.throws(
+    () => build({ request: { cachedContent: 'cachedContents/abc' } }),
+    (e) => e instanceof ProviderError && e.type === 'unsupported' && e.retryOther === true,
+  );
+});

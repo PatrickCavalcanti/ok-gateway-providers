@@ -31,6 +31,9 @@ const PROTECTED_KEYS = new Set(['model', 'messages', 'stream', 'tools', 'respons
  */
 export function buildRequest({ account, model, compat, request, apiKey }) {
   const ctx = { provider: account.provider, model: model.id };
+  if (request.cachedContent !== undefined) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: cachedContent só existe no fio google-generative-ai`, ctx);
+  }
   const url = `${account.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
   /** @type {Record<string, string>} */

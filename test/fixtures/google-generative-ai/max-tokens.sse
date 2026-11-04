@@ -1,0 +1,4 @@
+data: {"candidates": [{"content": {"parts": [{"text": "Era uma vez um"}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 7,"totalTokenCount": 7,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 7}]},"modelVersion": "gemini-3.5-flash","responseId": "m4aWaZ6fHtzWjrEPm9eboQ8"}
+
+data: {"candidates": [{"content": {"parts": [{"text": " dragão"}],"role": "model"},"finishReason": "MAX_TOKENS","index": 0}],"usageMetadata": {"promptTokenCount": 7,"candidatesTokenCount": 5,"totalTokenCount": 12,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 7}],"candidatesTokensDetails": [{"modality": "TEXT","tokenCount": 5}]},"modelVersion": "gemini-3.5-flash","responseId": "m4aWaZ6fHtzWjrEPm9eboQ8"}
+

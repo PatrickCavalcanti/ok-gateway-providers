@@ -1,0 +1,2 @@
+data: {"candidates": [{"content": {"parts": [{"text": "Segundo o documento, sim."}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 5000,"candidatesTokenCount": 7,"totalTokenCount": 5007,"cachedContentTokenCount": 4096,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 5000}],"cacheTokensDetails": [{"modality": "TEXT","tokenCount": 4096}],"candidatesTokensDetails": [{"modality": "TEXT","tokenCount": 7}]},"modelVersion": "gemini-3.5-flash","responseId": "k8aWabO3J_SUjrEPyZ3hqQM"}
+
