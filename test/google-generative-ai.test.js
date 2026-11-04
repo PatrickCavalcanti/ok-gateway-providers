@@ -294,7 +294,7 @@ test('params: modelo, depois pedido; protegidos ficam; generationConfig se funde
   assert.deepEqual(body.safetySettings, [2]);
   assert.deepEqual(body.contents, [{ role: 'user', parts: [{ text: 'oi' }] }]);
   for (const k of ['systemInstruction', 'tools', 'cachedContent']) assert.equal(k in body, false, k);
-  assert.deepEqual(body.generationConfig, { maxOutputTokens: 99, topP: 0.9, thinkingConfig: { includeThoughts: true } });
+  assert.deepEqual(body.generationConfig, { maxOutputTokens: 10, topP: 0.9, thinkingConfig: { includeThoughts: true } });
 });
 
 // ---------------------------------------------------------------------------------------
