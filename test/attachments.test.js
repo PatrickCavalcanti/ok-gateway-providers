@@ -152,3 +152,27 @@ test('openai: áudio e vídeo em data-url saem sem o prefixo, com o formato tira
     { type: 'input_video', input_video: { data: 'AAAA', format: 'mp4' } },
   ]);
 });
+
+test('data-url de áudio e vídeo sem base64 ou sem dados é invalid_request, sem outro alvo', () => {
+  const audio = { id: 'm', input: ['audio'], transport: { audio: 'input_audio' } };
+  const video = { id: 'm', input: ['video'], transport: { video: 'input_video' } };
+  const bad = (e) => e instanceof ProviderError && e.type === 'invalid_request' && e.retryOther === false;
+  for (const data of ['data:audio/mp3,QQ%3D%3D', 'data:audio/mp3', 'data:audio/mp3;base64,']) {
+    assert.throws(() => assertMediaSupported({ type: 'audio', data, format: 'mp3' }, audio), bad, data);
+  }
+  for (const data of ['data:video/mp4,QQ%3D%3D', 'data:video/mp4', 'data:video/mp4;base64,', '']) {
+    assert.throws(() => assertMediaSupported({ type: 'video', data, mime: 'video/mp4' }, video), bad, data);
+  }
+  // vídeo por video_url leva o data-url como está, mas vazio também não passa
+  assert.throws(() => assertMediaSupported({ type: 'video', data: 'data:video/mp4;base64,', mime: 'video/mp4' }, { ...video, transport: { video: 'video_url' } }), bad);
+  assert.throws(() => convert([{ type: 'audio', data: 'data:audio/wav;base64,', format: 'wav' }]), bad);
+});
+
+test('openai: format e mime explícitos vencem o prefixo do data-url', () => {
+  assert.deepEqual(convert([{ type: 'audio', data: 'data:audio/wav;base64,UklG', format: 'mp3' }]), [
+    { type: 'input_audio', input_audio: { data: 'UklG', format: 'mp3' } },
+  ]);
+  assert.deepEqual(convert([{ type: 'video', data: 'data:video/quicktime;base64,AAAA', mime: 'video/mp4' }], model({ transport: { video: 'input_video' } })), [
+    { type: 'input_video', input_video: { data: 'AAAA', format: 'mp4' } },
+  ]);
+});

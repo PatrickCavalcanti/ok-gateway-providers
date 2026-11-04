@@ -472,12 +472,10 @@ test('Gemini: áudio e vídeo em data-url dispensam format e mime', () => {
   const [c] = toGeminiContents([{ role: 'user', content: [
     { type: 'audio', data: 'data:audio/mp3;base64,QQ==' },
     { type: 'video', data: 'data:video/mp4;base64,Qg==' },
-    { type: 'audio', data: 'data:audio/wav;base64,Qw==', format: 'mp3' }, // o prefixo vence, como em image e file
   ] }], ctx);
   assert.deepEqual(c.parts, [
     { inlineData: { mimeType: 'audio/mp3', data: 'QQ==' } },
     { inlineData: { mimeType: 'video/mp4', data: 'Qg==' } },
-    { inlineData: { mimeType: 'audio/wav', data: 'Qw==' } },
   ]);
   throwsType(() => toGeminiContents([{ role: 'user', content: [{ type: 'audio', data: 'data:;base64,QQ==' }] }], ctx), 'invalid_request', false);
 });
@@ -521,18 +519,49 @@ test('parte desconhecida com algo emitido, ou com content_filter, é ignorada', 
   assert.equal(e.result.finishReason, 'stop');
 });
 
-test('parameters só some quando o schema é um objeto vazio de verdade', () => {
+test('parameters some quando o schema não declara nada que restrinja', () => {
   const tool = (/** @type {any} */ parameters) => build({ messages: hi, tools: [{ name: 'f', parameters }] }).body.tools[0].functionDeclarations[0];
-  assert.equal('parameters' in tool({ type: 'object' }), false);
-  assert.equal('parameters' in tool({ type: 'object', properties: {} }), false);
+  for (const schema of [
+    { type: 'object' },
+    { type: 'object', properties: {} },
+    { type: 'object', required: [] },
+    { type: 'object', properties: {}, required: [] },
+    { type: 'object', properties: {}, additionalProperties: false },
+    { type: 'object', additionalProperties: true },
+    { type: 'object', $schema: 'http://json-schema.org/draft-07/schema#', properties: {}, additionalProperties: false },
+  ]) assert.equal('parameters' in tool(schema), false, JSON.stringify(schema));
   for (const schema of [
     { type: 'object', required: ['a'] },
-    { type: 'object', properties: {}, required: [] },
+    { type: 'object', properties: { a: { type: 'string' } } },
     { type: 'object', $defs: { x: { type: 'string' } } },
-    { type: 'object', additionalProperties: false },
-    { type: 'object', $schema: 'http://json-schema.org/draft-07/schema#' },
+    { type: 'object', oneOf: [{ properties: { a: {} } }] },
+    { type: 'object', additionalProperties: { type: 'string' } }, // mapa com valor tipado restringe
     { type: 'string' },
   ]) assert.deepEqual(tool(schema).parameters, schema);
+});
+
+test('Gemini: format e mime explícitos vencem o prefixo do data-url', () => {
+  const [c] = toGeminiContents([{ role: 'user', content: [
+    { type: 'audio', data: 'data:audio/wav;base64,Qw==', format: 'mp3' },
+    { type: 'video', data: 'data:video/quicktime;base64,Qg==', mime: 'video/mp4' },
+    { type: 'image', data: 'data:image/jpeg;base64,REVG', mime: 'image/png' },
+  ] }], ctx);
+  assert.deepEqual(c.parts.map((p) => p.inlineData.mimeType), ['audio/mp3', 'video/mp4', 'image/png']);
+});
+
+test('data-url vazio ou sem base64 em áudio e vídeo dá invalid_request', () => {
+  for (const data of ['data:audio/mp3,QQ%3D%3D', 'data:audio/mp3', 'data:audio/mp3;base64,']) {
+    throwsType(() => toGeminiContents([{ role: 'user', content: [{ type: 'audio', data, format: 'mp3' }] }], ctx), 'invalid_request', false);
+  }
+});
+
+test('toolName que não é texto não vazio dá invalid_request', () => {
+  const calls = { role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'f', arguments: '{}' }] };
+  for (const toolName of ['', '  ', 3, null, {}]) {
+    throwsType(() => toGeminiContents([calls, { role: 'tool', toolCallId: 'a', toolName: /** @type {any} */ (toolName), content: 'r' }], ctx), 'invalid_request', false);
+  }
+  // ausente continua valendo: o nome sai do mapa
+  assert.equal(toGeminiContents([calls, { role: 'tool', toolCallId: 'a', content: 'r' }], ctx)[1].parts[0].functionResponse.name, 'f');
 });
 
 test('usage.reasoning fica ausente com thoughtsTokenCount 0 ou ausente', async () => {

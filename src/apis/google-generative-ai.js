@@ -167,16 +167,21 @@ function toDeclarations(tools) {
   });
 }
 
+/** Chaves que um objeto sem argumentos pode ter: nenhuma delas restringe o que a função recebe. */
+const EMPTY_SCHEMA_KEYS = new Set(['type', 'properties', 'required', 'additionalProperties', '$schema']);
+
 /**
- * Objeto sem nada: `{ type: 'object' }`, com ou sem `properties` vazio. Qualquer outra chave
- * (`required`, `$defs`, `additionalProperties`…) mantém o schema como veio.
+ * Objeto que não declara nada que restrinja: sem `properties` nem `required` (ausentes ou vazios) e
+ * sem chave fora de `EMPTY_SCHEMA_KEYS`. O Gemini recusa objeto sem propriedades. `$defs`, `oneOf`
+ * e o resto mantêm o schema; `additionalProperties` como schema (mapa com valor tipado) também.
  * @param {Record<string, any>|undefined} schema
  */
 function noArguments(schema) {
   if (!schema) return true;
   if (schema.type !== 'object') return false;
-  if (Object.keys(schema).some((k) => k !== 'type' && k !== 'properties')) return false;
-  return !schema.properties || !Object.keys(schema.properties).length;
+  if (Object.keys(schema).some((k) => !EMPTY_SCHEMA_KEYS.has(k))) return false;
+  if (isPlainObject(schema.additionalProperties)) return false;
+  return !Object.keys(schema.properties ?? {}).length && !(schema.required ?? []).length;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -235,6 +240,9 @@ export function toGeminiContents(messages, { model, provider }) {
       out.push({ role: 'model', parts: parts.length ? parts : [{ text: '' }] });
     } else if (msg.role === 'tool') {
       // O nome da mensagem vence: é o único caminho quando a chamada ficou fora da lista (prefixo em cache).
+      if (msg.toolName !== undefined && (typeof msg.toolName !== 'string' || !msg.toolName.trim())) {
+        throw invalid(`${where}: toolName precisa ser um texto não vazio`, ctx);
+      }
       const name = msg.toolName || (msg.toolCallId ? callNames.get(msg.toolCallId) : undefined);
       if (!name) {
         throw invalid(msg.toolCallId
@@ -313,7 +321,8 @@ function inlineData(part, ctx, at) {
     data = url.data;
     mime = url.mime;
   }
-  mime ||= part.type === 'audio' ? (part.format ? `audio/${part.format}` : undefined) : part.mime;
+  // `format`/`mime` explícitos vencem o prefixo do data-url, como no openai-completions.
+  mime = (part.type === 'audio' ? (part.format ? `audio/${part.format}` : undefined) : part.mime) || mime;
   mime = mime?.split(';')[0].trim();
   if (!mime) throw invalid(`${at}: ${part.type} em base64 precisa de mime`, ctx);
   return { mimeType: mime, data };

@@ -40,6 +40,19 @@ export function parseDataUrl(raw) {
   return { mime: header[0] || undefined, base64: header.includes('base64'), data: raw.slice(comma + 1) };
 }
 
+/**
+ * Dado de áudio/vídeo: vazio nunca vale, e data-url precisa ser base64 quando o transporte o decodifica
+ * (percent-encoding seria enviado como se fosse base64). `video_url` leva o data-url como está.
+ * @param {string} data @param {string} what @param {{ provider?: string }} ctx @param {Model} m @param {boolean} [needBase64]
+ */
+function assertDataUrl(data, what, ctx, m, needBase64 = true) {
+  if (!data) throw invalid(ctx, m, `parte de ${what} sem dados`);
+  const url = parseDataUrl(data);
+  if (!url) return;
+  if (!url.data) throw invalid(ctx, m, `data-url de ${what} sem dados`);
+  if (needBase64 && !url.base64) throw invalid(ctx, m, `data-url de ${what} precisa ser base64 (;base64)`);
+}
+
 /** @param {{ provider?: string }} ctx @param {Model} model @param {string} message */
 function invalid(ctx, model, message) {
   return new ProviderError({
@@ -102,6 +115,7 @@ export function assertMediaSupported(part, model, ctx = {}) {
     if (t !== 'input_audio' && t !== 'inline_data') throw fail('o modelo não aceita áudio no transporte declarado (transport.audio)');
     // Em data-url o mime já vem no prefixo, como em imagem e arquivo.
     if (!part.data || (!part.format && !parseDataUrl(part.data)?.mime)) throw invalid(ctx, m, 'parte de áudio precisa de data (base64) e format');
+    assertDataUrl(part.data, 'áudio', ctx, m);
     return;
   }
 
@@ -111,6 +125,7 @@ export function assertMediaSupported(part, model, ctx = {}) {
     throw fail('o modelo não declara transport.video (input_video, video_url ou inline_data); vídeo não é enviado sem isso');
   }
   if (part.data === undefined && part.url === undefined) throw invalid(ctx, m, 'parte de vídeo sem data nem url');
+  if (part.data !== undefined) assertDataUrl(part.data, 'vídeo', ctx, m, t !== 'video_url');
   if (t === 'input_video' || t === 'inline_data') {
     if (part.data === undefined) throw fail(`transporte ${t} só aceita vídeo em base64 (data), não URL`);
     if (!part.mime && !parseDataUrl(part.data)?.mime) throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
