@@ -89,6 +89,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   if (budget && compat.reasoningFormat !== 'reasoning_object') {
     throw unsupported(`${ctx.provider}/${ctx.model}: reasoning.maxTokens/exclude só existem com reasoningFormat "reasoning_object" (este é "${compat.reasoningFormat}")`, ctx);
   }
+  // O OpenRouter recusa os dois juntos (medido em 2026-11-04): quem pede decide qual vale.
+  if (request.effort !== undefined && budget?.max_tokens !== undefined) {
+    throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, message: `${ctx.provider}/${ctx.model}: effort e reasoning.maxTokens não vão juntos; escolha um` });
+  }
   if (request.effort !== undefined || budget) {
     switch (compat.reasoningFormat) {
       case 'reasoning_effort': body.reasoning_effort = request.effort; break;

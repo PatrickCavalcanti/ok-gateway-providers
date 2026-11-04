@@ -295,10 +295,10 @@ test('stop vai como stop; lista vazia não vai; valor fora de lista de textos é
   }
 });
 
-test('reasoning.maxTokens e exclude: só no formato reasoning_object, junto do effort no mesmo objeto', () => {
+test('reasoning.maxTokens e exclude: só no formato reasoning_object; effort e maxTokens não vão juntos', () => {
   const account = { compat: { reasoningFormat: 'reasoning_object' } };
-  assert.deepEqual(build({ account, request: { effort: 'high', reasoning: { maxTokens: 2000 } } }).body.reasoning, { effort: 'high', max_tokens: 2000 });
-  assert.deepEqual(build({ account, request: { effort: 'low', reasoning: { maxTokens: 500, exclude: true } } }).body.reasoning, { effort: 'low', max_tokens: 500, exclude: true });
+  assert.throws(() => build({ account, request: { effort: 'high', reasoning: { maxTokens: 2000 } } }), (e) => e.type === 'invalid_request' && e.retryOther === false);
+  assert.deepEqual(build({ account, request: { effort: 'low', reasoning: { exclude: true } } }).body.reasoning, { effort: 'low', exclude: true });
   assert.deepEqual(build({ account, request: { reasoning: { maxTokens: 800 } } }).body.reasoning, { max_tokens: 800 }); // sem effort
   assert.deepEqual(build({ account, request: { reasoning: { exclude: false } } }).body.reasoning, { exclude: false });
   assert.equal('reasoning' in build({ account, request: { reasoning: {} } }).body, false); // objeto vazio não pede nada
