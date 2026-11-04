@@ -46,6 +46,16 @@ export function createClient({ account, model, fetch: fetchImpl }) {
     model,
     /** @param {ChatRequest} request */
     chat(request) { return startChat({ account, model, request, doFetch }); },
+    /** @param {{ texts: string[], dimensions?: number, params?: Record<string, unknown>, signal?: AbortSignal, timeouts?: import('./timeouts.js').Timeouts }} request */
+    embed(request) { return runOperation('embeddings', { account, model, request, doFetch }); },
+    /** @param {any} request */
+    transcribe(request) { return runOperation('transcription', { account, model, request, doFetch }); },
+    /** @param {any} request */
+    speak(request) { return runOperation('speech', { account, model, request, doFetch }); },
+    /** @param {any} request */
+    generateImage(request) { return runOperation('image-generation', { account, model, request, doFetch }); },
+    /** @param {any} request */
+    decide(request) { return runOperation('decision', { account, model, request, doFetch }); },
   };
 }
 
@@ -75,7 +85,7 @@ function startChat({ account, model, request, doFetch }) {
   let emitted = false;
 
   (async () => {
-    const deadline = createDeadline({ timeouts: account.timeouts, signal: local.signal });
+    const deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: local.signal });
     try {
       if (!Array.isArray(model.operations) || !model.operations.includes('chat')) {
         throw unsupported(`${account.provider}/${model.id}: o modelo não declara a operação chat`, ctx);
@@ -89,25 +99,8 @@ function startChat({ account, model, request, doFetch }) {
       const compat = resolveCompat(account, model);
       if (local.signal.aborted) throw fromFailure(new Error('aborted'), 'aborted', ctx, false);
 
-      /** @type {string|undefined} */
-      let apiKey;
-      try {
-        apiKey = typeof account.apiKey === 'function' ? await account.apiKey() : account.apiKey;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new ProviderError({ type: 'auth', ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: não foi possível obter a chave da conta — ${msg}` });
-      }
-
-      /** @type {ReturnType<ApiModule['buildRequest']>} */
-      let built;
-      try {
-        built = api.buildRequest({ account, model, compat, request, apiKey: apiKey ?? '' });
-      } catch (err) {
-        if (err instanceof ProviderError) throw err;
-        // Erro que não é tipado ao montar o pedido = pedido malformado: outro alvo não resolve.
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: pedido malformado — ${msg}` });
-      }
+      const apiKey = await resolveKey(account, ctx);
+      const built = buildOrThrow(api.buildRequest, { account, model, compat, request, apiKey }, ctx);
       // Ordem: headers fixos da conta ← compat (conta ← modelo) ← os do fio (auth, content-type), que não se sobrescrevem.
       const headers = mergeHeaders(account.headers, compat.headers, built.headers);
       if (local.signal.aborted) throw fromFailure(new Error('aborted'), 'aborted', ctx, false);
@@ -127,7 +120,7 @@ function startChat({ account, model, request, doFetch }) {
       if (!res.body) throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: resposta sem corpo` });
 
       const events = readSSE(res.body, { onChunk: () => deadline.touch() });
-      const gen = api.parseStream(events, { account, model, compat });
+      const gen = api.parseStream(events, { account, model, compat, headers: res.headers });
       /** @type {import('./types.js').StreamSummary} */
       let summary;
       try {
@@ -170,6 +163,122 @@ function startChat({ account, model, request, doFetch }) {
         /** Sair do `for await` cancela o pedido. */
         async return() { local.abort(); return { done: true, value: undefined }; },
       };
+    },
+  };
+}
+
+/**
+ * Chave da conta. Falha vira `auth`.
+ * @param {Account} account @param {{ provider: string, model: string }} ctx
+ * @returns {Promise<string>}
+ */
+async function resolveKey(account, ctx) {
+  try {
+    const key = typeof account.apiKey === 'function' ? await account.apiKey() : account.apiKey;
+    return key ?? '';
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ProviderError({ type: 'auth', ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: não foi possível obter a chave da conta — ${msg}` });
+  }
+}
+
+/**
+ * Monta o pedido. Erro não tipado = pedido malformado: outro alvo não resolve.
+ * @template A, R
+ * @param {(args: A) => R} fn @param {A} args @param {{ provider: string, model: string }} ctx
+ * @returns {R}
+ */
+function buildOrThrow(fn, args, ctx) {
+  try { return fn(args); } catch (err) {
+    if (err instanceof ProviderError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: pedido malformado — ${msg}` });
+  }
+}
+
+/** FormData segue como está; o fetch gera o Content-Type com o boundary. @param {Record<string, unknown> | FormData} body */
+const serializeBody = (body) => (body instanceof FormData ? body : JSON.stringify(body));
+
+/**
+ * Operação de chamada única (embeddings, transcrição, fala, imagem, decisão).
+ * @param {Exclude<import('./vocabulary.js').Operation, 'chat'>} operation
+ * @param {{ account: Account, model: Model, request: any, doFetch: typeof globalThis.fetch }} args
+ */
+async function runOperation(operation, { account, model, request, doFetch }) {
+  const ctx = { provider: account.provider, model: model.id };
+  const deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: request?.signal });
+  try {
+    if (!Array.isArray(model.operations) || !model.operations.includes(operation)) {
+      throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara a operação ${operation}`, ctx);
+    }
+    const api = APIS.get(account.api);
+    const mod = api?.operations?.[operation];
+    if (!mod) throw unsupported(`${ctx.provider}/${ctx.model}: o fio "${account.api}" não implementa ${operation}`, ctx);
+
+    const compat = resolveCompat(account, model);
+    const opCtx = { account, model, compat, request: request ?? {} };
+    const apiKey = await resolveKey(account, ctx);
+    const built = buildOrThrow(mod.buildRequest, { ...opCtx, apiKey }, ctx);
+    const headers = mergeHeaders(account.headers, compat.headers, built.headers);
+
+    /** @type {Response} */
+    let res;
+    try {
+      res = await doFetch(built.url, { method: 'POST', headers, body: serializeBody(built.body), signal: deadline.signal });
+    } catch (err) {
+      throw fromFailure(err, deadline.reason(), ctx, false);
+    }
+    if (!res.ok) {
+      let text = '';
+      try { text = await res.text(); } catch { /* corpo ilegível: fica o status */ }
+      throw errorFromStatus(res.status, { ...ctx, body: text });
+    }
+    deadline.touch(); // chegaram os headers: acaba o primeiro byte, começa a inatividade
+
+    const { result, usage, reportedCostUsd } = await mod.parseResponse(oneShot(res, deadline, ctx), opCtx);
+    if (deadline.reason()) throw fromFailure(new Error('corpo encerrado'), deadline.reason(), ctx, false);
+    return { ...result, usage, cost: computeCost(model, usage, reportedCostUsd) };
+  } catch (err) {
+    throw err instanceof ProviderError ? err : fromFailure(err, deadline.reason(), ctx, false);
+  } finally {
+    deadline.clear();
+  }
+}
+
+/**
+ * Resposta inteira, lendo o corpo com o relógio de inatividade.
+ * @param {Response} res @param {ReturnType<typeof createDeadline>} deadline
+ * @param {{ provider: string, model: string }} ctx
+ * @returns {import('./types.js').OneShotResponse}
+ */
+function oneShot(res, deadline, ctx) {
+  const bytes = async () => {
+    if (!res.body) return new Uint8Array();
+    /** @type {Uint8Array[]} */
+    const chunks = [];
+    let total = 0;
+    const reader = res.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      deadline.touch();
+      chunks.push(value);
+      total += value.length;
+    }
+    const out = new Uint8Array(total);
+    let at = 0;
+    for (const c of chunks) { out.set(c, at); at += c.length; }
+    return out;
+  };
+  return {
+    status: res.status,
+    headers: res.headers,
+    bytes,
+    async json() {
+      const raw = new TextDecoder().decode(await bytes());
+      try { return JSON.parse(raw); } catch (err) {
+        throw new ProviderError({ type: 'upstream', ...ctx, cause: err, body: raw, message: `${ctx.provider}/${ctx.model}: resposta não é JSON` });
+      }
     },
   };
 }
