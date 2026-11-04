@@ -1,4 +1,2 @@
-# As fixtures são bytes de resposta de provedor; os testes as cortam por "
-
-".
+# Os testes cortam fixture por dois fins de linha LF; autocrlf no Windows os quebraria.
 test/fixtures/** text eol=lf
