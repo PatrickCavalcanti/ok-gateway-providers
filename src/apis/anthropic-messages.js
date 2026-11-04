@@ -38,6 +38,11 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   if (!Array.isArray(request.messages)) throw invalid('messages precisa ser uma lista', ctx);
   const messages = buildMessages(request.messages, model, compat, ctx);
 
+  // Esta API não tem orçamento de raciocínio no pedido (o `effort` é o único controle).
+  if (request.reasoning && (request.reasoning.maxTokens !== undefined || request.reasoning.exclude !== undefined)) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: reasoning.maxTokens/exclude só existem com reasoningFormat "reasoning_object" (o fio anthropic-messages usa só effort)`, ctx);
+  }
+
   const effort = request.effort;
   const adaptive = effort !== undefined && effort !== 'none';
   // O thinking vai rodar: adaptive pedido por `effort`, ou o padrão do modelo sem `effort: 'none'`.
@@ -62,6 +67,11 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
       input_schema: t.parameters ?? { type: 'object', properties: {} },
     }));
   }
+
+  const choice = toolChoiceOf(request, ctx);
+  if (choice !== undefined) body.tool_choice = typeof choice === 'object' ? { type: 'tool', name: choice.name } : { type: TOOL_CHOICE_TYPE[choice] };
+  const stop = stopOf(request, ctx);
+  if (stop) body.stop_sequences = stop;
 
   /** @type {Record<string, any>} */
   const outputConfig = {};
@@ -103,6 +113,34 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   };
 }
 
+/** `toolChoice` textual → `tool_choice.type` da API. */
+const TOOL_CHOICE_TYPE = /** @type {const} */ ({ auto: 'auto', none: 'none', required: 'any' });
+
+/**
+ * `toolChoice` do pedido, conferido. Sem `tools` não há o que escolher: `invalid_request`, sem outro alvo.
+ * @param {ChatRequest} request @param {Ctx} ctx
+ * @returns {import('../types.js').ToolChoice | undefined}
+ */
+function toolChoiceOf(request, ctx) {
+  const choice = request.toolChoice;
+  if (choice === undefined) return undefined;
+  if (!request.tools?.length) throw invalid('toolChoice exige tools no pedido', ctx);
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (choice && typeof choice === 'object' && typeof choice.name === 'string' && choice.name) return choice;
+  throw invalid('toolChoice precisa ser "auto", "none", "required" ou { name }', ctx);
+}
+
+/**
+ * `stop` do pedido, conferido. Lista vazia é o mesmo que não pedir.
+ * @param {ChatRequest} request @param {Ctx} ctx @returns {string[] | undefined}
+ */
+function stopOf(request, ctx) {
+  const stop = request.stop;
+  if (stop === undefined) return undefined;
+  if (!Array.isArray(stop) || stop.some((s) => typeof s !== 'string')) throw invalid('stop precisa ser uma lista de textos', ctx);
+  return stop.length ? stop : undefined;
+}
+
 /** @param {CacheMark|undefined} cache @param {ResolvedCompat} compat @returns {Block} */
 function cacheField(cache, compat) {
   if (!cache || compat.cacheMarker !== 'cache_control') return {};
@@ -130,8 +168,10 @@ function buildMessages(messages, model, compat, ctx) {
     const where = `messages[${i}]`;
     if (!msg || typeof msg !== 'object') throw invalid(`${where}: mensagem malformada (esperado um objeto)`, ctx);
     if (msg.role === 'assistant') {
+      // O raciocínio assinado precisa ir antes do texto e das tool calls, onde quer que a parte esteja na lista.
+      const blocks = partsToBlocks(msg.content, model, compat, ctx, where, false);
       /** @type {Block[]} */
-      const content = partsToBlocks(msg.content, model, compat, ctx, where, false);
+      const content = [...blocks.filter(isThinking), ...blocks.filter((b) => !isThinking(b))];
       const calls = msg.toolCalls ?? [];
       if (!Array.isArray(calls)) throw invalid(`${where}: toolCalls precisa ser uma lista`, ctx);
       calls.forEach((call, k) => {
@@ -153,6 +193,7 @@ function buildMessages(messages, model, compat, ctx) {
         type: 'tool_result',
         tool_use_id: msg.toolCallId,
         content: toolResultContent(msg.content, model, compat, ctx, where),
+        ...(msg.isError === true ? { is_error: true } : {}),
         // A API aceita `cache_control` no próprio bloco tool_result; a marca da parte vem para cá.
         ...cacheField(toolResultCache(msg.content), compat),
       }];
@@ -176,6 +217,9 @@ function buildMessages(messages, model, compat, ctx) {
   });
   return out;
 }
+
+/** @param {Block} block */
+const isThinking = (block) => block.type === 'thinking' || block.type === 'redacted_thinking';
 
 /** @param {{ id: string, name: string, arguments: string }} call @param {string} where @param {Ctx} ctx */
 function parseArguments(call, where, ctx) {
@@ -225,6 +269,14 @@ function partsToBlocks(content, model, compat, ctx, where, allowMedia) {
     switch (part.type) {
       case 'text':
         if (part.text) out.push({ type: 'text', text: part.text, ...cacheField(part.cache, compat) });
+        return;
+      case 'reasoning':
+        // `allowMedia: false` é o papel assistant, o único que guarda raciocínio.
+        if (allowMedia) throw invalid(`${at}: parte reasoning só existe no papel assistant`, ctx);
+        // Sem assinatura (ou sem o bloco redigido) a API recusaria o bloco: a parte é ignorada. É o que
+        // acontece com o raciocínio que veio de outro provedor, que não traz assinatura da Anthropic.
+        if (part.redacted) out.push({ type: 'redacted_thinking', data: part.redacted });
+        else if (part.signature) out.push({ type: 'thinking', thinking: part.text ?? '', signature: part.signature });
         return;
       case 'audio':
       case 'video':
@@ -404,6 +456,8 @@ export async function* parseStream(sseEvents, { account, model }) {
         blocks.set(ev.index, { kind, id: b.id, name: b.name, json: '', initial: b.input });
         if (kind === 'text' && b.text) yield { type: 'text', text: b.text };
         else if (kind === 'thinking' && b.thinking) yield { type: 'reasoning', text: b.thinking };
+        // Bloco que a API cifrou: sem texto, e precisa voltar como veio. O `data` é opaco.
+        else if (kind === 'redacted_thinking' && b.data) yield { type: 'reasoning', text: '', redacted: b.data };
         break;
       }
       case 'content_block_delta': {
@@ -411,8 +465,10 @@ export async function* parseStream(sseEvents, { account, model }) {
         const blk = blocks.get(ev.index);
         if (d.type === 'text_delta' && d.text) yield { type: 'text', text: d.text };
         else if (d.type === 'thinking_delta' && d.thinking) yield { type: 'reasoning', text: d.thinking };
+        // A assinatura fecha o bloco `thinking`: o chamador a junta ao texto que já recebeu e a devolve na parte reasoning.
+        else if (d.type === 'signature_delta' && d.signature) yield { type: 'reasoning', text: '', signature: d.signature };
         else if (d.type === 'input_json_delta' && blk) blk.json += d.partial_json ?? '';
-        // signature_delta e outros: não viram evento.
+        // outros deltas: não viram evento.
         break;
       }
       case 'content_block_stop': {

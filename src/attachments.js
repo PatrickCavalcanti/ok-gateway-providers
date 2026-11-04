@@ -53,14 +53,17 @@ function invalid(ctx, model, message) {
  * `unsupported` (retryOther true) quando `model.input` não declara a modalidade ou
  * quando o transporte não cobre a forma da parte (ex.: URL num modelo só `data-url`).
  * Parte malformada (sem dado nem URL) é `invalid_request` com `retryOther` false.
- * Serve a qualquer fio.
+ * Serve a qualquer fio. Parte `reasoning` não é mídia nem entrada: só o papel assistant a guarda, e
+ * quem a aceita a trata antes de chegar aqui; vinda numa entrada, é `invalid_request`.
  * @param {Part} part
  * @param {Pick<Model, 'id'|'input'|'transport'>} model
  * @param {{ provider?: string }} [ctx]
+ * @returns {asserts part is Exclude<Part, { type: 'reasoning' }>}
  */
 export function assertMediaSupported(part, model, ctx = {}) {
   if (part.type === 'text') return;
   const m = /** @type {Model} */ (model);
+  if (part.type === 'reasoning') throw invalid(ctx, m, 'parte reasoning só existe no papel assistant');
   const where = `${ctx.provider ?? 'provider'}/${model.id}`;
   const fail = (/** @type {string} */ msg) => unsupported(`${where}: ${msg}`, { provider: ctx.provider, model: model.id });
 

@@ -128,6 +128,7 @@ test('raciocínio: thinking_delta vira reasoning e o corpo liga o thinking adapt
   assert.deepEqual(events.filter((e) => e.type !== 'end'), [
     { type: 'reasoning', text: 'Preciso somar ' },
     { type: 'reasoning', text: '2 + 2.' },
+    { type: 'reasoning', text: '', signature: 'EqQBCgIYAhIM' }, // signature_delta do fixture: agora é evento (Task 4.2)
     { type: 'text', text: '4' },
   ]);
   assert.deepEqual(f.calls[0].body.thinking, { type: 'adaptive' });
@@ -344,4 +345,95 @@ test('stream sem uso nenhum: usage zerado com missing e custo none, nunca zero s
   const { usage, cost } = await createClient({ account, model: priced, fetch: f }).chat(userHi).result;
   assert.deepEqual({ ...usage }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, missing: true });
   assert.deepEqual({ ...cost }, { usd: null, source: 'none' });
+});
+
+// ---------------------------------------------------------------------------------------
+// T1.2 · Fase 4 · Task 4.2 — raciocínio assinado: leitura
+
+/** SSE da Messages API a partir de uma lista de eventos já em objeto. */
+const sseOf = (events) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+const msgStart = { type: 'message_start', message: { usage: { input_tokens: 5, output_tokens: 1 } } };
+const msgEnd = (reason = 'end_turn') => [{ type: 'message_delta', delta: { stop_reason: reason }, usage: { output_tokens: 3 } }, { type: 'message_stop' }];
+
+test('signature_delta vira evento reasoning com text vazio e a assinatura', async () => {
+  const f = fakeFetch(() => sseResponse(sseOf([
+    msgStart,
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'somando' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'SIG-A' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '4' } },
+    { type: 'content_block_stop', index: 1 },
+    ...msgEnd(),
+  ])));
+  const events = await collect(createClient({ account, model: baseModel, fetch: f }).chat(userHi));
+  assert.deepEqual(events.filter((e) => e.type !== 'end'), [
+    { type: 'reasoning', text: 'somando' },
+    { type: 'reasoning', text: '', signature: 'SIG-A' },
+    { type: 'text', text: '4' },
+  ]);
+});
+
+test('signature_delta vazio não vira evento', async () => {
+  const f = fakeFetch(() => sseResponse(sseOf([
+    msgStart,
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: '' } },
+    { type: 'content_block_stop', index: 0 },
+    ...msgEnd(),
+  ])));
+  const events = await collect(createClient({ account, model: baseModel, fetch: f }).chat(userHi));
+  assert.deepEqual(events.map((e) => e.type), ['end']);
+});
+
+test('bloco redacted_thinking vira evento reasoning com redacted e text vazio', async () => {
+  const f = fakeFetch(() => sseResponse(sseOf([
+    msgStart,
+    { type: 'content_block_start', index: 0, content_block: { type: 'redacted_thinking', data: 'EmwKAhgB-RED' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'text', text: 'oi' } },
+    { type: 'content_block_stop', index: 1 },
+    ...msgEnd(),
+  ])));
+  const events = await collect(createClient({ account, model: baseModel, fetch: f }).chat(userHi));
+  assert.deepEqual(events.filter((e) => e.type !== 'end'), [
+    { type: 'reasoning', text: '', redacted: 'EmwKAhgB-RED' },
+    { type: 'text', text: 'oi' },
+  ]);
+});
+
+test('ciclo completo: o raciocínio assinado lido volta no pedido seguinte, antes da tool call', async () => {
+  const f = fakeFetch(() => sseResponse(sseOf([
+    msgStart,
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'vou ' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'consultar' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'SIG-B' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_1', name: 'soma', input: {} } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"a":1}' } },
+    { type: 'content_block_stop', index: 1 },
+    ...msgEnd('tool_use'),
+  ])));
+  const client = createClient({ account, model: baseModel, fetch: f });
+  const events = await collect(client.chat({ ...userHi, tools: [{ name: 'soma', parameters: { type: 'object' } }] }));
+  // o chamador junta os eventos em partes, como o Gateway faz
+  const reasoning = events.filter((e) => e.type === 'reasoning');
+  const part = { type: 'reasoning', text: reasoning.map((e) => e.text).join(''), signature: reasoning.find((e) => e.signature)?.signature };
+  const call = events.find((e) => e.type === 'tool_call');
+  assert.equal('providerData' in call, false); // a Anthropic não tem dado opaco na tool call
+  await collect(client.chat({
+    ...userHi,
+    tools: [{ name: 'soma', parameters: { type: 'object' } }],
+    messages: [
+      userHi.messages[0],
+      { role: 'assistant', content: [part], toolCalls: [{ id: call.id, name: call.name, arguments: call.arguments }] },
+      { role: 'tool', toolCallId: call.id, content: '1' },
+    ],
+  }));
+  assert.deepEqual(f.calls[1].body.messages[1].content, [
+    { type: 'thinking', thinking: 'vou consultar', signature: 'SIG-B' },
+    { type: 'tool_use', id: 'toolu_1', name: 'soma', input: { a: 1 } },
+  ]);
 });

@@ -98,10 +98,20 @@
  *   | { type: 'image', data?: string, url?: string, mime?: string }
  *   | { type: 'audio', data: string, format?: string }
  *   | { type: 'video', data?: string, url?: string, mime?: string }
- *   | { type: 'file', data?: string, url?: string, mime?: string, name?: string, cache?: CacheMark }} Part
+ *   | { type: 'file', data?: string, url?: string, mime?: string, name?: string, cache?: CacheMark }
+ *   | { type: 'reasoning', text: string, signature?: string, redacted?: string }} Part
+ *   `reasoning` só existe no papel `assistant`. A Anthropic o devolve (`thinking` com `signature`, ou
+ *   `redacted_thinking`); os outros fios o ignoram de propósito, para o fallback entre modelos funcionar
  */
 
-/** @typedef {{ id: string, name: string, arguments: string }} ToolCall */
+/**
+ * @typedef {object} ToolCall
+ * @property {string} id
+ * @property {string} name
+ * @property {string} arguments
+ * @property {Record<string, unknown>} [providerData]  dado opaco do provedor, que o chamador guarda e devolve
+ *   na mesma chamada. Gemini: `thoughtSignature`. Os outros fios ignoram
+ */
 
 /**
  * @typedef {object} Message
@@ -111,11 +121,14 @@
  * @property {string} [toolCallId]      só no papel tool
  * @property {string} [toolName]        só no papel tool: nome da tool chamada. O fio Google o usa quando a
  *   chamada não está na lista (ficou num prefixo cacheado); os outros fios ignoram
+ * @property {boolean} [isError]        só no papel tool: o resultado é um erro. Anthropic: `is_error`; Gemini:
+ *   `response.error`; os outros fios: prefixo `Tool error: ` no texto
  */
 
 /** @typedef {{ name: string, description?: string, parameters: Record<string, unknown> }} Tool */
 /** @typedef {{ name?: string, schema: Record<string, unknown>, strict?: boolean }} ResponseSchema */
 /** @typedef {'none'|'low'|'medium'|'high'|'xhigh'} Effort */
+/** @typedef {'auto'|'none'|'required'|{ name: string }} ToolChoice */
 /** @typedef {string | { text: string, cache?: CacheMark }[]} System */
 
 /**
@@ -125,7 +138,11 @@
  * @property {Tool[]} [tools]
  * @property {ResponseSchema} [responseSchema]
  * @property {string} [cachedContent]  referência a um `cachedContents/…` do Gemini; os outros fios dão `unsupported`
+ * @property {ToolChoice} [toolChoice]  exige `tools`; sem elas é `invalid_request`
+ * @property {string[]} [stop]  textos que encerram a geração
  * @property {Effort} [effort]
+ * @property {{ maxTokens?: number, exclude?: boolean }} [reasoning]  além do `effort`; só o formato
+ *   `reasoning_object` (OpenRouter) aceita, nos outros é `unsupported`
  * @property {number} [maxTokens]
  * @property {number} [temperature]
  * @property {Record<string, unknown>} [params]
@@ -154,8 +171,8 @@
 
 /**
  * @typedef {{ type: 'text', text: string }
- *   | { type: 'reasoning', text: string }
- *   | { type: 'tool_call', id: string, name: string, arguments: string }
+ *   | { type: 'reasoning', text: string, signature?: string, redacted?: string }
+ *   | { type: 'tool_call', id: string, name: string, arguments: string, providerData?: Record<string, unknown> }
  *   | { type: 'end', finishReason: string, usage: Usage, cost: CostResult }} ChatEvent
  */
 

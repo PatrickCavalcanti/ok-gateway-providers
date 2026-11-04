@@ -58,6 +58,13 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     }));
   }
 
+  const choice = toolChoiceOf(request, ctx);
+  if (choice !== undefined) {
+    body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', function: { name: choice.name } };
+  }
+  const stop = stopOf(request, ctx);
+  if (stop) body.stop = stop;
+
   if (request.responseSchema) {
     const { name, schema, strict } = request.responseSchema;
     switch (compat.structuredOutput) {
@@ -76,10 +83,16 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
 
   // Esforço de raciocínio. Com reasoningFormat 'none' o modelo/endpoint não tem o
   // parâmetro: o esforço é dica de custo/latência, não mídia — é ignorado SEM erro.
-  if (request.effort !== undefined) {
+  // Orçamento (`reasoning.maxTokens`/`exclude`) é outra coisa: muda o que volta, e só o
+  // objeto `reasoning` do OpenRouter o aceita; nos outros formatos é `unsupported`.
+  const budget = reasoningBudget(request.reasoning);
+  if (budget && compat.reasoningFormat !== 'reasoning_object') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: reasoning.maxTokens/exclude só existem com reasoningFormat "reasoning_object" (este é "${compat.reasoningFormat}")`, ctx);
+  }
+  if (request.effort !== undefined || budget) {
     switch (compat.reasoningFormat) {
       case 'reasoning_effort': body.reasoning_effort = request.effort; break;
-      case 'reasoning_object': body.reasoning = { effort: request.effort }; break;
+      case 'reasoning_object': body.reasoning = { ...(request.effort !== undefined ? { effort: request.effort } : {}), ...budget }; break;
       case 'none': break;
       default:
         throw unsupported(`${ctx.provider}/${ctx.model}: reasoningFormat "${compat.reasoningFormat}" não existe no fio openai-completions`, ctx);
@@ -131,8 +144,11 @@ function buildMessages(request, ctx) {
     if (msg.role === 'user') {
       out.push({ role: 'user', content: userContent(msg.content, ctx) });
     } else if (msg.role === 'assistant') {
+      // Parte reasoning é ignorada de propósito: este fio não tem onde guardá-la, e o raciocínio de outro
+      // provedor (assinado pela Anthropic, por exemplo) não pode quebrar o fallback.
+      const content = Array.isArray(msg.content) ? msg.content.filter((p) => p?.type !== 'reasoning') : msg.content;
       /** @type {Record<string, unknown>} */
-      const m = { role: 'assistant', content: textOnly(msg.content, 'assistant', ctx) };
+      const m = { role: 'assistant', content: textOnly(content, 'assistant', ctx) };
       if (msg.toolCalls?.length) {
         m.tool_calls = msg.toolCalls.map((tc) => ({
           id: tc.id,
@@ -143,7 +159,8 @@ function buildMessages(request, ctx) {
       out.push(m);
     } else if (msg.role === 'tool') {
       if (!msg.toolCallId) throw badRequest(ctx, 'mensagem tool sem toolCallId');
-      out.push({ role: 'tool', tool_call_id: msg.toolCallId, content: toolContent(msg.content, ctx) });
+      const content = toolContent(msg.content, ctx);
+      out.push({ role: 'tool', tool_call_id: msg.toolCallId, content: msg.isError === true ? markError(content) : content });
     } else {
       throw badRequest(ctx, `papel de mensagem desconhecido: ${String(/** @type {any} */ (msg).role)}`);
     }
@@ -196,6 +213,64 @@ function toolContent(content, ctx) {
     if (parts.some((p) => Object.keys(p).length > 2)) return parts;
   }
   return text;
+}
+
+/** Este fio não tem campo de erro no resultado da tool: o aviso vai no texto (spec T1.2 §6). */
+const TOOL_ERROR_PREFIX = 'Tool error: ';
+
+/**
+ * Prefixa o resultado com o aviso de erro. Em lista de partes (resultado com marca de cache), o
+ * prefixo vai na primeira, que é de texto: a lista só existe quando há parte marcada.
+ * @param {string | Record<string, any>[]} content
+ */
+function markError(content) {
+  if (typeof content === 'string') return TOOL_ERROR_PREFIX + content;
+  const [first, ...rest] = content;
+  return [{ ...first, text: TOOL_ERROR_PREFIX + first.text }, ...rest];
+}
+
+/**
+ * `toolChoice` do pedido, conferido. Sem `tools` não há o que escolher: `invalid_request`, sem outro alvo.
+ * @param {import('../types.js').ChatRequest} request @param {{ provider: string, model: string }} ctx
+ * @returns {import('../types.js').ToolChoice | undefined}
+ */
+function toolChoiceOf(request, ctx) {
+  const choice = request.toolChoice;
+  if (choice === undefined) return undefined;
+  if (!request.tools?.length) throw invalidRequest(ctx, 'toolChoice exige tools no pedido');
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (choice && typeof choice === 'object' && typeof choice.name === 'string' && choice.name) return choice;
+  throw invalidRequest(ctx, 'toolChoice precisa ser "auto", "none", "required" ou { name }');
+}
+
+/**
+ * `stop` do pedido, conferido. Lista vazia é o mesmo que não pedir.
+ * @param {import('../types.js').ChatRequest} request @param {{ provider: string, model: string }} ctx
+ * @returns {string[] | undefined}
+ */
+function stopOf(request, ctx) {
+  const stop = request.stop;
+  if (stop === undefined) return undefined;
+  if (!Array.isArray(stop) || stop.some((s) => typeof s !== 'string')) throw invalidRequest(ctx, 'stop precisa ser uma lista de textos');
+  return stop.length ? stop : undefined;
+}
+
+/**
+ * `reasoning.maxTokens`/`exclude` no nome do campo do OpenRouter; `null` quando o pedido não traz nenhum.
+ * @param {import('../types.js').ChatRequest['reasoning']} reasoning
+ */
+function reasoningBudget(reasoning) {
+  if (!reasoning || typeof reasoning !== 'object') return null;
+  /** @type {Record<string, unknown>} */
+  const out = {};
+  if (reasoning.maxTokens !== undefined) out.max_tokens = reasoning.maxTokens;
+  if (reasoning.exclude !== undefined) out.exclude = reasoning.exclude;
+  return Object.keys(out).length ? out : null;
+}
+
+/** @param {{ provider: string, model: string }} ctx @param {string} message */
+function invalidRequest(ctx, message) {
+  return new ProviderError({ type: 'invalid_request', retryOther: false, provider: ctx.provider, model: ctx.model, message: `${ctx.provider}/${ctx.model}: ${message}` });
 }
 
 /**

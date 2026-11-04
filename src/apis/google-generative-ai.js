@@ -43,8 +43,15 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   /** @type {Record<string, any>} */
   const body = { contents: toGeminiContents(request.messages, { model, provider: account.provider }) };
 
+  // O Gemini não tem orçamento de raciocínio neste pedido (o orçamento vive em params.generationConfig.thinkingConfig).
+  if (request.reasoning && (request.reasoning.maxTokens !== undefined || request.reasoning.exclude !== undefined)) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: reasoning.maxTokens/exclude só existem com reasoningFormat "reasoning_object" (para o Gemini use params.generationConfig.thinkingConfig)`, ctx);
+  }
+
   const system = systemText(request.system);
   const declarations = toDeclarations(request.tools);
+  const choice = toolChoiceOf(request, ctx);
+  const stop = stopOf(request, ctx);
 
   if (request.cachedContent !== undefined) {
     // A API proíbe `systemInstruction` e `tools` junto de `cachedContent`: eles vivem dentro do cache.
@@ -55,12 +62,14 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   } else {
     if (system !== undefined) body.systemInstruction = { parts: [{ text: system }] };
     if (declarations) body.tools = [{ functionDeclarations: declarations }];
+    if (choice !== undefined) body.toolConfig = { functionCallingConfig: functionCallingConfig(choice) };
   }
 
   /** @type {Record<string, any>} */
   const generationConfig = {};
   if (request.temperature !== undefined && compat.supportsTemperature) generationConfig.temperature = request.temperature;
   if (request.maxTokens !== undefined) generationConfig.maxOutputTokens = request.maxTokens;
+  if (stop) generationConfig.stopSequences = stop;
   if (request.responseSchema) {
     if (compat.structuredOutput !== 'response_json_schema') {
       throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada neste fio (compat.structuredOutput = ${compat.structuredOutput})`, ctx);
@@ -86,6 +95,46 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;
 
   return { url, headers, body };
+}
+
+/**
+ * `toolChoice` → `functionCallingConfig`. `required` e a tool nomeada são ambos o modo `ANY`; a nomeada
+ * restringe as funções permitidas a uma.
+ * @param {import('../types.js').ToolChoice} choice
+ */
+function functionCallingConfig(choice) {
+  if (typeof choice === 'object') return { mode: 'ANY', allowedFunctionNames: [choice.name] };
+  return { mode: { auto: 'AUTO', none: 'NONE', required: 'ANY' }[choice] };
+}
+
+/**
+ * `toolChoice` do pedido, conferido. Sem `tools` não há o que escolher: `invalid_request`, sem outro alvo.
+ * Com `cachedContent` as tools vivem no cache e `toolConfig` é proibido junto, então cai no mesmo erro.
+ * @param {import('../types.js').ChatRequest} request @param {Ctx} ctx
+ * @returns {import('../types.js').ToolChoice | undefined}
+ */
+function toolChoiceOf(request, ctx) {
+  const choice = request.toolChoice;
+  if (choice === undefined) return undefined;
+  if (!request.tools?.length) {
+    throw invalid(request.cachedContent !== undefined
+      ? 'toolChoice não pode vir com cachedContent: as tools vivem dentro do cache e a API proíbe toolConfig junto'
+      : 'toolChoice exige tools no pedido', ctx);
+  }
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (choice && typeof choice === 'object' && typeof choice.name === 'string' && choice.name) return choice;
+  throw invalid('toolChoice precisa ser "auto", "none", "required" ou { name }', ctx);
+}
+
+/**
+ * `stop` do pedido, conferido. Lista vazia é o mesmo que não pedir.
+ * @param {import('../types.js').ChatRequest} request @param {Ctx} ctx @returns {string[] | undefined}
+ */
+function stopOf(request, ctx) {
+  const stop = request.stop;
+  if (stop === undefined) return undefined;
+  if (!Array.isArray(stop) || stop.some((s) => typeof s !== 'string')) throw invalid('stop precisa ser uma lista de textos', ctx);
+  return stop.length ? stop : undefined;
 }
 
 /** @param {unknown} v @returns {v is Record<string, unknown>} */
@@ -166,7 +215,8 @@ export function toGeminiContents(messages, { model, provider }) {
     } else if (msg.role === 'assistant') {
       /** @type {Record<string, any>[]} */
       const parts = [];
-      const text = textOnly(msg.content, 'assistant', ctx, where);
+      // Raciocínio de outro provedor (ou assinado pela Anthropic) não volta ao Gemini: ele é ignorado.
+      const text = textOnly(msg.content, 'assistant', ctx, where, true);
       if (text) parts.push({ text });
       const calls = msg.toolCalls ?? [];
       if (!Array.isArray(calls)) throw invalid(`${where}: toolCalls precisa ser uma lista`, ctx);
@@ -174,7 +224,12 @@ export function toGeminiContents(messages, { model, provider }) {
         const at = `${where}.toolCalls[${k}]`;
         if (!call || typeof call !== 'object') throw invalid(`${at}: tool_call malformado (esperado um objeto)`, ctx);
         if (typeof call.name !== 'string' || !call.name) throw invalid(`${at}: tool_call precisa de name`, ctx);
-        parts.push({ functionCall: { name: call.name, args: parseArguments(call, at, ctx) } });
+        // A assinatura de pensamento fica ao lado do functionCall, como a API a entregou.
+        const signature = call.providerData?.thoughtSignature;
+        parts.push({
+          functionCall: { name: call.name, args: parseArguments(call, at, ctx) },
+          ...(typeof signature === 'string' && signature ? { thoughtSignature: signature } : {}),
+        });
         if (call.id) callNames.set(call.id, call.name);
       });
       out.push({ role: 'model', parts: parts.length ? parts : [{ text: '' }] });
@@ -186,7 +241,9 @@ export function toGeminiContents(messages, { model, provider }) {
           ? `${where}: resultado de tool "${msg.toolCallId}" sem chamada correspondente nas mensagens anteriores nem toolName`
           : `${where}: mensagem tool precisa de toolCallId ou toolName`, ctx);
       }
-      const part = { functionResponse: { name, response: { content: textOnly(msg.content, 'tool', ctx, where) } } };
+      // Sem campo de erro próprio: o Gemini lê `response.error` como falha da função.
+      const text = textOnly(msg.content, 'tool', ctx, where);
+      const part = { functionResponse: { name, response: msg.isError === true ? { error: text } : { content: text } } };
       const last = out[out.length - 1];
       if (last?.role === TOOL_RESULT_ROLE) last.parts.push(part);
       else out.push({ role: TOOL_RESULT_ROLE, parts: [part] });
@@ -263,14 +320,16 @@ function inlineData(part, ctx, at) {
 }
 
 /**
- * Papéis assistant e tool levam texto; mídia ali não tem formato neste fio.
- * @param {string | Part[]} content @param {string} role @param {Ctx} ctx @param {string} where
+ * Papéis assistant e tool levam texto; mídia ali não tem formato neste fio. `skipReasoning` descarta as
+ * partes reasoning (só o papel assistant as tem).
+ * @param {string | Part[]} content @param {string} role @param {Ctx} ctx @param {string} where @param {boolean} [skipReasoning]
  */
-function textOnly(content, role, ctx, where) {
+function textOnly(content, role, ctx, where, skipReasoning = false) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) throw invalid(`${where}: content do papel ${role} precisa ser string ou lista de partes`, ctx);
   let text = '';
   for (const p of content) {
+    if (skipReasoning && p?.type === 'reasoning') continue;
     if (!p || p.type !== 'text') {
       throw unsupported(`${ctx.provider}/${ctx.model}: ${where}: parte ${p?.type} no papel ${role} não é suportada (mídia só em mensagens user)`, ctx);
     }
@@ -380,7 +439,12 @@ export async function* parseStream(events, { account, model }) {
         // O Gemini não manda id: sintetizamos um por resposta, que o chamador devolve no papel tool.
         sawCall = true;
         emitted = true;
-        yield { type: 'tool_call', id: `gemini-tc-${callIndex++}`, name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args ?? {}) };
+        // `thoughtSignature` vem na mesma parte da chamada e precisa voltar nela: sai como dado opaco do provedor.
+        const signature = typeof part.thoughtSignature === 'string' && part.thoughtSignature ? part.thoughtSignature : null;
+        yield {
+          type: 'tool_call', id: `gemini-tc-${callIndex++}`, name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args ?? {}),
+          ...(signature ? { providerData: { thoughtSignature: signature } } : {}),
+        };
       } else {
         // Código executável, imagem de saída…: sem evento. Só vira erro se a resposta ficar vazia (abaixo).
         // `thoughtSignature` e `thought` sozinhos são metadado, não conteúdo.
