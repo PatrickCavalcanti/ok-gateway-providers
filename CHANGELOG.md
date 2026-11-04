@@ -10,6 +10,9 @@ Versão semântica; `0.x` enquanto a API se acomoda — cada consumidor fixa a t
 - Chat: `toolChoice`, `stop`, `reasoning.maxTokens` e `exclude`, `isError`, `toolName`, raciocínio
   assinado e `providerData` em ida e volta. `timeouts` por pedido.
 - `Cost.cacheStoragePerMTokHour` e `Usage.cacheStorageTokenHours`. Vários campos novos em `Compat`.
+- Tipos por operação (`EmbedResult`, `SpeakResult`…) e tipo `Client`.
+- `ProviderError` com `code`, `errorType`, `providerCode`, `providerName` e `generationId`. `generationId` também no fim do `chat` e nas operações.
+- `catalog`: `gateway.operation`, quando vier, define `operations`.
 - Fixtures gravadas de provedores reais, exceto Gemini.
 
 **O que muda para quem já usa:**
@@ -17,7 +20,7 @@ Versão semântica; `0.x` enquanto a API se acomoda — cada consumidor fixa a t
 - `parseOpenRouterModels`: saída só imagem agora é `image-generation`, e não `chat`. As saídas
   `speech`, `transcription` e `decisions` viram a operação certa. Vídeo e rerank ficam com
   `operations: []`.
-- `toolChoice`, `stop`, `maxTokens` e `temperature` explícitos passam a vencer `params`.
+- O que o pedido traz explícito (`toolChoice`, `stop`, `maxTokens`, `temperature`, `responseSchema`, `effort`, `reasoning`) passa a vencer `params`. Objetos fundem, com o explícito vencendo campo a campo.
 - Evento `reasoning` pode vir com `text: ''` e `signature`.
 - `effort` junto de `reasoning.maxTokens` dá `invalid_request`.
 - Áudio e vídeo em data-url passam sem `format`/`mime`, e o prefixo sai do corpo enviado.
