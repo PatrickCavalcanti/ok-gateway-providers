@@ -168,3 +168,28 @@ test('catálogo declara o transporte de vídeo e áudio do OpenRouter', () => {
   const [t] = parseOpenRouterModels({ data: [{ id: 'g/t', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, pricing: { prompt: '0', completion: '0' } }] });
   assert.equal(t.transport, undefined);
 });
+
+test('operação por modalidade de saída: embeddings vira embeddings', () => {
+  const m = parseOpenRouterModel({ id: 't/emb', architecture: { input_modalities: ['text'], output_modalities: ['embeddings'] } });
+  assert.deepEqual(m?.operations, ['embeddings']);
+});
+
+test('operação por modalidade de saída: só image vira image-generation', () => {
+  const m = parseOpenRouterModel({ id: 't/img', architecture: { input_modalities: ['text'], output_modalities: ['image'] } });
+  assert.deepEqual(m?.operations, ['image-generation']);
+});
+
+test('operação por modalidade de saída: só audio vira speech', () => {
+  const m = parseOpenRouterModel({ id: 't/aud', architecture: { input_modalities: ['text'], output_modalities: ['audio'] } });
+  assert.deepEqual(m?.operations, ['speech']);
+});
+
+test('operação por modalidade de saída: text+image segue chat', () => {
+  const m = parseOpenRouterModel({ id: 't/chat-img', architecture: { input_modalities: ['text'], output_modalities: ['text', 'image'] } });
+  assert.deepEqual(m?.operations, ['chat']);
+});
+
+test('operação por modalidade de saída: só text segue chat', () => {
+  const m = parseOpenRouterModel({ id: 't/chat-txt', architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
+  assert.deepEqual(m?.operations, ['chat']);
+});

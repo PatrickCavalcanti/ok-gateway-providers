@@ -84,10 +84,13 @@ export function parseOpenRouterModel(item) {
     meta.modalitiesAssumed = true;
   }
 
-  // Mesma regra do Igris (`listasDoCatalogoOpenRouter`): saída 'embeddings' → embeddings,
-  // o resto → chat. Geração de imagem do OpenRouter é chat com saída de imagem.
+  // Saída só de imagem ou só de áudio vai pelas rotas próprias (/images, /audio/speech).
+  // Saída mista segue no chat.
   /** @type {Model['operations']} */
-  const operations = outputList.includes('embeddings') ? ['embeddings'] : ['chat'];
+  const operations = outputList.includes('embeddings') ? ['embeddings']
+    : outputList.length === 1 && outputList[0] === 'image' ? ['image-generation']
+    : outputList.length === 1 && outputList[0] === 'audio' ? ['speech']
+    : ['chat'];
 
   /** @type {Model} */
   const model = { id, operations, input: inputList, output: outputList };
