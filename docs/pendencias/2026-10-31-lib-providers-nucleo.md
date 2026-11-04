@@ -15,3 +15,5 @@
 | custo | `usage.missing` precisa de tratamento no Gateway (não cobrar zero em silêncio) | T2.2 |
 | anexos | Arquivo por URL no OpenRouter (`file_data` com URL) não confirmado: o padrão é só data-url; ligar `transport.file: ['data-url','url']` depois de provar no smoke | smoke |
 | compat | `effort` com `reasoningFormat: 'none'` é ignorado sem erro; o Igris (D6) recusa — decidir se vira `unsupported` | E4 |
+| catálogo | `/api/v1/models` sem parâmetro só lista modelo de saída texto (454 em 2026-11-04). Fala, transcrição, decisão e imagem só vêm com `?output_modalities=all` (696). Quem busca o catálogo precisa pedir assim; o leitor já entende as saídas | T2.2 |
+| fala | No OpenRouter, o TTS do Gemini cobra por token de áudio gerado, e a resposta binária não traz uso nem custo. A lib mede caracteres (T7), como o Gateway hoje. Estimativa da revisão: subcobrança de cerca de 30× nesse modelo. Só o `X-Generation-Id` permite reconciliar | T2.2 |
