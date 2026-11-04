@@ -5,8 +5,11 @@
 //   OPENROUTER_API_KEY=… ANTHROPIC_API_KEY=… node scripts/smoke.mjs
 // Modelos (opcionais): SMOKE_OPENROUTER_MODEL (padrão openai/gpt-5.4-mini),
 //   SMOKE_ANTHROPIC_MODEL (padrão claude-haiku-5-5).
-// Provedor sem chave é pulado, e o script diz isso. Casos: texto, tool call, imagem,
-// PDF e saída estruturada (caso que o modelo não declara na entrada é pulado). Exit 1 se algum caso falhar.
+// Também: OPENAI_API_KEY, GROQ_API_KEY, GOOGLE_API_KEY, TYPESAFE_API_KEY.
+// Provedor sem chave é pulado, e o script diz isso. Casos de chat: texto, tool call, imagem,
+// PDF e saída estruturada (caso que o modelo não declara na entrada é pulado). Depois, as
+// operações: embeddings, STT, TTS, imagem e decisão. Conta sem crédito (402) não conta como
+// falha: sai PARCIAL. Exit 1 se algum caso falhar.
 
 import { createClient, parseOpenRouterModels } from '../src/index.js';
 
@@ -57,6 +60,26 @@ if (process.env.ANTHROPIC_API_KEY) {
   console.log('pulado: anthropic (sem ANTHROPIC_API_KEY)');
 }
 
+if (process.env.GOOGLE_API_KEY) {
+  targets.push({
+    name: 'google',
+    account: { id: 'smoke-google', provider: 'google', api: 'google-generative-ai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKey: process.env.GOOGLE_API_KEY },
+    model: { id: process.env.SMOKE_GOOGLE_MODEL || 'gemini-3.5-flash', operations: ['chat'], input: ['text', 'image', 'file'], output: ['text'] },
+  });
+} else {
+  console.log('pulado: google (sem GOOGLE_API_KEY)');
+}
+
+if (process.env.OPENAI_API_KEY) {
+  targets.push({
+    name: 'openai-responses',
+    account: { id: 'smoke-openai', provider: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY, compat: { structuredOutput: 'text_format', reasoningFormat: 'reasoning_object' } },
+    model: { id: 'gpt-5.4-nano', operations: ['chat'], input: ['text', 'image', 'file'], output: ['text'] },
+  });
+} else {
+  console.log('pulado: openai-responses (sem OPENAI_API_KEY)');
+}
+
 const cases = [
   {
     name: 'texto',
@@ -102,6 +125,7 @@ const cases = [
 ];
 
 let failed = 0;
+/** @type {Set<string>} */ const blocked = new Set();
 for (const t of targets) {
   const client = createClient({ account: t.account, model: t.model });
   for (const c of cases) {
@@ -124,13 +148,53 @@ for (const t of targets) {
       console.log(`${ok ? 'OK  ' : 'FALHOU'} ${t.name} · ${c.name} · ${Date.now() - started} ms · in ${r.usage.input} out ${r.usage.output} · US$ ${r.cost.usd ?? '—'} (${r.cost.source})`);
       if (!ok) console.log(`       texto: ${JSON.stringify(text).slice(0, 200)} · tools: ${JSON.stringify(toolCalls).slice(0, 200)}`);
     } catch (e) {
-      failed++;
       const err = /** @type {any} */ (e);
+      if (err.status === 402) { blocked.add(t.name); console.log(`SEM CRÉDITO ${t.name} · ${c.name}`); continue; }
+      failed++;
       console.log(`FALHOU ${t.name} · ${c.name} · ${err.type ?? 'erro'}: ${err.message}`);
     }
   }
 }
 
+// Operações de chamada única.
+const OPENAI = { id: 'o', provider: 'openai', api: 'openai-completions', baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY };
+const OPENROUTER = { id: 'r', provider: 'openrouter', api: 'openai-completions', baseUrl: 'https://openrouter.ai/api/v1', apiKey: process.env.OPENROUTER_API_KEY };
+const GROQ = { id: 'g', provider: 'groq', api: 'openai-completions', baseUrl: 'https://api.groq.com/openai/v1', apiKey: process.env.GROQ_API_KEY, compat: { sttResponseFormat: 'verbose_json' } };
+const TYPESAFE = { id: 't', provider: 'typesafe', api: 'openai-completions', baseUrl: 'https://api.typesafe.ai/v1', apiKey: process.env.TYPESAFE_API_KEY, compat: { decisionPath: 'systemone' } };
+const QUESTIONS = { pronto: { type: 'noul', instructions: 'O assistente já tem tudo para responder?', criteria: { true: 'nada falta', false: 'falta algo' } } };
+/** @param {string} id @param {string} operation */
+const opModel = (id, operation) => ({ id, operations: [operation], input: ['text'], output: ['text'] });
+/** @type {Uint8Array|undefined} */ let spoken;
+
+/** @type {{ name: string, needs: string|undefined, run: () => Promise<any>, check: (r: any) => boolean }[]} */
+const operations = [
+  { name: 'openai · embeddings', needs: OPENAI.apiKey, run: () => createClient({ account: /** @type {any} */ (OPENAI), model: /** @type {any} */ (opModel('text-embedding-3-small', 'embeddings')) }).embed({ texts: ['olá'] }), check: (r) => r.vectors[0].length > 0 },
+  { name: 'openai · fala', needs: OPENAI.apiKey, run: async () => { const r = await createClient({ account: /** @type {any} */ (OPENAI), model: /** @type {any} */ (opModel('tts-1', 'speech')) }).speak({ text: 'Teste de transcrição, um dois três.', voice: 'onyx', format: 'mp3' }); spoken = /** @type {any} */ (r).audio; return r; }, check: (r) => r.audio.length > 1000 && r.contentType.startsWith('audio/') },
+  { name: 'groq · transcrição', needs: GROQ.apiKey && OPENAI.apiKey, run: () => createClient({ account: /** @type {any} */ (GROQ), model: /** @type {any} */ (opModel('whisper-large-v3-turbo', 'transcription')) }).transcribe({ audio: /** @type {Uint8Array} */ (spoken), mime: 'audio/mpeg', language: 'pt' }), check: (r) => /transcri/i.test(r.text) && r.usage.audioSeconds > 0 },
+  { name: 'openai · transcrição', needs: OPENAI.apiKey, run: () => createClient({ account: /** @type {any} */ (OPENAI), model: /** @type {any} */ (opModel('gpt-4o-transcribe', 'transcription')) }).transcribe({ audio: /** @type {Uint8Array} */ (spoken), mime: 'audio/mpeg', language: 'pt' }), check: (r) => /transcri/i.test(r.text) && r.usage.input > 0 },
+  { name: 'openrouter · fala', needs: OPENROUTER.apiKey, run: () => createClient({ account: /** @type {any} */ (OPENROUTER), model: /** @type {any} */ (opModel('google/gemini-3.1-flash-tts-preview', 'speech')) }).speak({ text: 'Teste curto.', voice: 'Kore', format: 'pcm' }), check: (r) => r.audio.length > 1000 && /rate=/.test(r.contentType) },
+  { name: 'openrouter · imagem', needs: OPENROUTER.apiKey, run: () => createClient({ account: /** @type {any} */ ({ ...OPENROUTER, compat: { imagePath: '/images', imageResponseFormat: null } }), model: /** @type {any} */ (opModel('qwen/qwen-image-3', 'image-generation')) }).generateImage({ prompt: 'um quadrado vermelho', params: { n: 1 } }), check: (r) => r.images.length === 1 && r.cost.source === 'provider' },
+  { name: 'openrouter · decisão', needs: OPENROUTER.apiKey, run: () => createClient({ account: /** @type {any} */ ({ ...OPENROUTER, compat: { decisionPath: '../alpha/decisions' } }), model: /** @type {any} */ (opModel('typesafe/jev-1.13', 'decision')) }).decide({ state: { pedido: 'oi' }, questions: QUESTIONS }), check: (r) => r.answers.pronto?.type === 'noul' && r.cost.source === 'provider' },
+  { name: 'typesafe · decisão', needs: TYPESAFE.apiKey, run: () => createClient({ account: /** @type {any} */ (TYPESAFE), model: /** @type {any} */ (opModel('jev-latest', 'decision')) }).decide({ state: { pedido: 'oi' }, questions: QUESTIONS }), check: (r) => r.answers.pronto?.type === 'noul' },
+];
+
+for (const op of operations) {
+  if (!op.needs) { console.log(`pulado: ${op.name} (sem chave)`); continue; }
+  const started = Date.now();
+  try {
+    const r = await op.run();
+    const ok = op.check(r);
+    if (!ok) failed++;
+    console.log(`${ok ? 'OK  ' : 'FALHOU'} ${op.name} · ${Date.now() - started} ms · US$ ${r.cost.usd} (${r.cost.source})`);
+  } catch (e) {
+    const err = /** @type {any} */ (e);
+    if (err.status === 402) { blocked.add(op.name); console.log(`SEM CRÉDITO ${op.name}`); continue; }
+    failed++;
+    console.log(`FALHOU ${op.name} · ${err.type ?? 'erro'}: ${err.message}`);
+  }
+}
+
 if (!targets.length) { console.log('FALTA: nenhuma chave no ambiente — nada foi testado'); process.exit(1); }
-console.log(failed ? `SUJO: ${failed} caso(s) falharam` : 'OK smoke');
-process.exit(failed ? 1 : 0);
+const sem = [...blocked].join(', ');
+console.log(failed ? `SUJO: ${failed} caso(s) falharam` : blocked.size ? `PARCIAL smoke: sem crédito em ${sem}` : 'OK smoke');
+process.exitCode = failed ? 1 : 0;

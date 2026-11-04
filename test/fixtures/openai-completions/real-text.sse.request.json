@@ -1,0 +1,14 @@
+{
+  "model": "openai/gpt-5.4-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Responda só: pong"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "max_tokens": 200
+}

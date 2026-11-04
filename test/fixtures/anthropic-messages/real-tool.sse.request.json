@@ -1,0 +1,33 @@
+{
+  "model": "claude-haiku-5-5",
+  "max_tokens": 800,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Use a ferramenta para saber a hora em Dourados."
+        }
+      ]
+    }
+  ],
+  "stream": true,
+  "tools": [
+    {
+      "name": "horas_em",
+      "description": "Hora atual numa cidade",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "cidade": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cidade"
+        ]
+      }
+    }
+  ]
+}
