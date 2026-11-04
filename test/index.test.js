@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as lib from '../src/index.js';
 
 test('index registra os fios do núcleo', () => {
-  assert.deepEqual(lib.listApis().sort(), ['anthropic-messages', 'google-generative-ai', 'openai-completions']);
+  assert.deepEqual(lib.listApis().sort(), ['anthropic-messages', 'google-generative-ai', 'openai-completions', 'openai-responses']);
 });
 
 test('exports públicos da spec existem', () => {
