@@ -93,7 +93,8 @@ await writeFile(out, payload);
 await writeFile(`${out}.meta.json`, scrub(JSON.stringify({ status: res.status, headers: selectHeaders(res.headers) }, null, 2), apiKey) + '\n');
 await writeFile(`${out}.request.json`, scrub(JSON.stringify(describeBody(built.body), null, 2), apiKey) + '\n');
 console.log(`${res.ok ? 'OK' : `SUJO: HTTP ${res.status}`} fixture gravada em ${out} (${size} bytes)`);
-process.exit(res.ok ? 0 : 2);
+// exitCode, não exit(): com o fetch aberto, process.exit derruba o Node 24 no Windows (libuv).
+process.exitCode = res.ok ? 0 : 2;
 
 /** @param {string} operation @returns {string[]} */
 function outputFor(operation) {

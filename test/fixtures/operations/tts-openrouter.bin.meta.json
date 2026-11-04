@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "audio/pcm;rate=24000;channels=1",
+    "x-generation-id": "gen-tts-1793767800-ban6ifWwRF0TlFiodPKU"
+  }
+}

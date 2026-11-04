@@ -1,0 +1,16 @@
+{
+  "model": "typesafe/jev-1.13",
+  "state": {
+    "pedido": "oi"
+  },
+  "questions": {
+    "pronto": {
+      "type": "noul",
+      "instructions": "O assistente já tem tudo para responder?",
+      "criteria": {
+        "true": "nada falta",
+        "false": "falta algo"
+      }
+    }
+  }
+}

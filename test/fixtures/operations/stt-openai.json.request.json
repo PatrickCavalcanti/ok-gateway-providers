@@ -1,0 +1,10 @@
+{
+  "file": {
+    "name": "audio.mp3",
+    "type": "audio/mpeg",
+    "bytes": 34944
+  },
+  "model": "gpt-4o-transcribe",
+  "response_format": "json",
+  "language": "pt"
+}
