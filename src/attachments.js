@@ -26,6 +26,20 @@ export function mediaFormat(mime) {
   return alias[subtype] ?? subtype;
 }
 
+/**
+ * Separa um data-url: `data:<mime>[;param]*[;base64],<dados>`. `null` quando não é data-url.
+ * `mime` vem sem parâmetros e fica `undefined` se o prefixo não o traz. Sem vírgula, `data` é vazio.
+ * @param {string} raw
+ * @returns {{ mime: string|undefined, base64: boolean, data: string } | null}
+ */
+export function parseDataUrl(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith('data:')) return null;
+  const comma = raw.indexOf(',');
+  if (comma === -1) return { mime: undefined, base64: false, data: '' };
+  const header = raw.slice(5, comma).split(';').map((h) => h.trim());
+  return { mime: header[0] || undefined, base64: header.includes('base64'), data: raw.slice(comma + 1) };
+}
+
 /** @param {{ provider?: string }} ctx @param {Model} model @param {string} message */
 function invalid(ctx, model, message) {
   return new ProviderError({
@@ -83,7 +97,8 @@ export function assertMediaSupported(part, model, ctx = {}) {
     // Sem declaração, o único transporte conhecido é `input_audio`; `null` desliga.
     const t = transport.audio === undefined ? 'input_audio' : transport.audio;
     if (t !== 'input_audio' && t !== 'inline_data') throw fail('o modelo não aceita áudio no transporte declarado (transport.audio)');
-    if (!part.data || !part.format) throw invalid(ctx, m, 'parte de áudio precisa de data (base64) e format');
+    // Em data-url o mime já vem no prefixo, como em imagem e arquivo.
+    if (!part.data || (!part.format && !parseDataUrl(part.data)?.mime)) throw invalid(ctx, m, 'parte de áudio precisa de data (base64) e format');
     return;
   }
 
@@ -95,7 +110,7 @@ export function assertMediaSupported(part, model, ctx = {}) {
   if (part.data === undefined && part.url === undefined) throw invalid(ctx, m, 'parte de vídeo sem data nem url');
   if (t === 'input_video' || t === 'inline_data') {
     if (part.data === undefined) throw fail(`transporte ${t} só aceita vídeo em base64 (data), não URL`);
-    if (!part.mime) throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
+    if (!part.mime && !parseDataUrl(part.data)?.mime) throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
   } else if (part.data !== undefined && !part.data.startsWith('data:') && !part.mime) {
     throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
   }
@@ -164,11 +179,15 @@ export function toOpenAIContent(content, { model, compat, provider }) {
       return { type: 'file', file: { filename: part.name ?? defaultFilename(mime), file_data: fileData } };
     }
     if (part.type === 'audio') {
-      return { type: 'input_audio', input_audio: { data: part.data, format: part.format } };
+      // `input_audio.data` é base64 puro: o data-url perde o prefixo, que fornece o format se faltar.
+      const url = parseDataUrl(part.data);
+      const format = part.format ?? mediaFormat(/** @type {string} */ (url?.mime));
+      return { type: 'input_audio', input_audio: { data: url ? url.data : part.data, format } };
     }
     // vídeo (assertMediaSupported garantiu transport.video e a forma da parte)
     if (model.transport?.video === 'input_video') {
-      return { type: 'input_video', input_video: { data: part.data, format: mediaFormat(/** @type {string} */ (part.mime)) } };
+      const url = parseDataUrl(/** @type {string} */ (part.data));
+      return { type: 'input_video', input_video: { data: url ? url.data : part.data, format: mediaFormat(/** @type {string} */ (part.mime ?? url?.mime)) } };
     }
     const url = part.url !== undefined ? part.url : asDataUrl(/** @type {string} */ (part.data), part.mime);
     return { type: 'video_url', video_url: { url } };

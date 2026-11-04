@@ -6,7 +6,7 @@
 // `unsupported`, e nada é descartado em silêncio.
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
-import { assertMediaSupported } from '../attachments.js';
+import { assertMediaSupported, parseDataUrl } from '../attachments.js';
 import { makeUsage, num } from '../usage.js';
 
 /** @typedef {import('../types.js').ApiModule} ApiModule */
@@ -76,7 +76,8 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     for (const [k, v] of Object.entries(layer)) {
       if (PROTECTED_KEYS.has(k) || v === undefined) continue;
       if (k === 'generationConfig') {
-        if (isPlainObject(v)) Object.assign(generationConfig, v);
+        if (!isPlainObject(v)) throw invalid('params.generationConfig precisa ser um objeto', ctx);
+        Object.assign(generationConfig, v);
         continue;
       }
       body[k] = v;
@@ -117,10 +118,16 @@ function toDeclarations(tools) {
   });
 }
 
-/** @param {Record<string, any>|undefined} schema */
+/**
+ * Objeto sem nada: `{ type: 'object' }`, com ou sem `properties` vazio. Qualquer outra chave
+ * (`required`, `$defs`, `additionalProperties`…) mantém o schema como veio.
+ * @param {Record<string, any>|undefined} schema
+ */
 function noArguments(schema) {
   if (!schema) return true;
-  return schema.type === 'object' && (!schema.properties || !Object.keys(schema.properties).length);
+  if (schema.type !== 'object') return false;
+  if (Object.keys(schema).some((k) => k !== 'type' && k !== 'properties')) return false;
+  return !schema.properties || !Object.keys(schema.properties).length;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -131,10 +138,10 @@ function noArguments(schema) {
  * (o snapshot do histórico) converte com a mesma função que o pedido usa.
  *
  * - `assistant` vira `model`, com `functionCall` para cada tool call.
- * - `tool` vira `functionResponse`; o `name` vem da chamada anterior de mesmo `toolCallId`.
+ * - `tool` vira `functionResponse`; o `name` vem de `toolName` ou da chamada anterior de mesmo `toolCallId`.
  *   Resultados seguidos viram um turno só, como o Gemini pede para chamadas paralelas.
  * - A conversão olha só as mensagens que recebe: resultado de tool cuja chamada ficou fora da
- *   lista dá `invalid_request`.
+ *   lista e sem `toolName` dá `invalid_request`.
  * @param {Message[]} messages
  * @param {{ model: Model, provider?: string }} ctx
  * @returns {GeminiContent[]}
@@ -172,9 +179,13 @@ export function toGeminiContents(messages, { model, provider }) {
       });
       out.push({ role: 'model', parts: parts.length ? parts : [{ text: '' }] });
     } else if (msg.role === 'tool') {
-      if (!msg.toolCallId) throw invalid(`${where}: mensagem tool precisa de toolCallId`, ctx);
-      const name = callNames.get(msg.toolCallId);
-      if (!name) throw invalid(`${where}: resultado de tool "${msg.toolCallId}" sem chamada correspondente nas mensagens anteriores`, ctx);
+      // O nome da mensagem vence: é o único caminho quando a chamada ficou fora da lista (prefixo em cache).
+      const name = msg.toolName || (msg.toolCallId ? callNames.get(msg.toolCallId) : undefined);
+      if (!name) {
+        throw invalid(msg.toolCallId
+          ? `${where}: resultado de tool "${msg.toolCallId}" sem chamada correspondente nas mensagens anteriores nem toolName`
+          : `${where}: mensagem tool precisa de toolCallId ou toolName`, ctx);
+      }
       const part = { functionResponse: { name, response: { content: textOnly(msg.content, 'tool', ctx, where) } } };
       const last = out[out.length - 1];
       if (last?.role === TOOL_RESULT_ROLE) last.parts.push(part);
@@ -239,14 +250,13 @@ function inlineData(part, ctx, at) {
   let data = raw;
   /** @type {string|undefined} */
   let mime;
-  if (raw.startsWith('data:')) {
-    const comma = raw.indexOf(',');
-    const header = comma === -1 ? '' : raw.slice(5, comma).split(';');
-    if (comma === -1 || !header.includes('base64')) throw invalid(`${at}: data-url de ${part.type} precisa ser base64`, ctx);
-    data = raw.slice(comma + 1);
-    mime = header[0];
+  const url = parseDataUrl(raw);
+  if (url) {
+    if (!url.base64) throw invalid(`${at}: data-url de ${part.type} precisa ser base64`, ctx);
+    data = url.data;
+    mime = url.mime;
   }
-  mime ||= part.type === 'audio' ? `audio/${part.format}` : part.mime;
+  mime ||= part.type === 'audio' ? (part.format ? `audio/${part.format}` : undefined) : part.mime;
   mime = mime?.split(';')[0].trim();
   if (!mime) throw invalid(`${at}: ${part.type} em base64 precisa de mime`, ctx);
   return { mimeType: mime, data };
@@ -315,7 +325,7 @@ function normalizeUsage(u) {
     input: Math.max(0, num(u.promptTokenCount) - cacheRead),
     output: num(u.candidatesTokenCount) + thoughts,
     cacheRead,
-    ...(typeof u.thoughtsTokenCount === 'number' && Number.isFinite(u.thoughtsTokenCount) ? { reasoning: u.thoughtsTokenCount } : {}),
+    ...(thoughts ? { reasoning: thoughts } : {}),
     raw: u,
   });
 }
@@ -334,6 +344,8 @@ export async function* parseStream(events, { account, model }) {
   let sawCall = false;
   let emitted = false;
   let callIndex = 0;
+  /** @type {string|null} primeira parte que o fio não modela */
+  let unknownPart = null;
 
   for await (const ev of events) {
     const data = ev.data.trim();
@@ -369,8 +381,11 @@ export async function* parseStream(events, { account, model }) {
         sawCall = true;
         emitted = true;
         yield { type: 'tool_call', id: `gemini-tc-${callIndex++}`, name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args ?? {}) };
+      } else {
+        // Código executável, imagem de saída…: sem evento. Só vira erro se a resposta ficar vazia (abaixo).
+        // `thoughtSignature` e `thought` sozinhos são metadado, não conteúdo.
+        unknownPart ??= Object.keys(part ?? {}).find((k) => k !== 'thoughtSignature' && k !== 'thought') ?? null;
       }
-      // Outras partes (código executável, imagem de saída…) não têm evento: são ignoradas.
     }
 
     const reason = candidate?.finishReason;
@@ -380,8 +395,13 @@ export async function* parseStream(events, { account, model }) {
   if (!finishReason && !blocked) {
     throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem finishReason (resposta cortada)` });
   }
+  const reason = finishReason ? mapFinishReason(finishReason, sawCall) : 'content_filter';
+  // Um fim normal sem nada emitido e com parte desconhecida seria uma resposta vazia fingindo sucesso.
+  if (unknownPart && !emitted && reason !== 'content_filter') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: a resposta veio só com a parte "${unknownPart}", que este fio não lê (texto, raciocínio e tool call são os suportados)`, ctx);
+  }
   return {
-    finishReason: finishReason ? mapFinishReason(finishReason, sawCall) : 'content_filter',
+    finishReason: reason,
     usage: normalizeUsage(lastUsage),
     reportedCostUsd: null,
   };

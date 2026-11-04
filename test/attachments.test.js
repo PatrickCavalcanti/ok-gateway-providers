@@ -121,3 +121,34 @@ test('inline_data recusa vídeo por URL e vídeo sem mime', () => {
   assert.throws(() => assertMediaSupported({ type: 'video', url: 'https://x/v.mp4' }, m), (e) => e.type === 'unsupported');
   assert.throws(() => assertMediaSupported({ type: 'video', data: 'QQ==' }, m), (e) => e.type === 'invalid_request');
 });
+
+test('áudio e vídeo em data-url dispensam format e mime: o prefixo já os traz', () => {
+  const audio = { id: 'm', input: ['audio'], transport: { audio: 'inline_data' } };
+  const video = { id: 'm', input: ['video'], transport: { video: 'inline_data' } };
+  assertMediaSupported({ type: 'audio', data: 'data:audio/mp3;base64,QQ==' }, audio);
+  assertMediaSupported({ type: 'audio', data: 'data:audio/mp3;base64,QQ==' }, { ...audio, transport: { audio: 'input_audio' } });
+  assertMediaSupported({ type: 'video', data: 'data:video/mp4;base64,QQ==' }, video);
+  assertMediaSupported({ type: 'video', data: 'data:video/mp4;base64,QQ==' }, { ...video, transport: { video: 'input_video' } });
+  // prefixo sem mime não resolve nada: continua exigindo
+  assert.throws(() => assertMediaSupported({ type: 'audio', data: 'data:;base64,QQ==' }, audio), (e) => e.type === 'invalid_request' && e.retryOther === false);
+  assert.throws(() => assertMediaSupported({ type: 'video', data: 'data:;base64,QQ==' }, video), (e) => e.type === 'invalid_request' && e.retryOther === false);
+  // base64 solto continua exigindo
+  assert.throws(() => assertMediaSupported({ type: 'audio', data: 'QQ==' }, audio), (e) => e.type === 'invalid_request');
+});
+
+test('openai: áudio e vídeo em data-url saem sem o prefixo, com o formato tirado dele', () => {
+  const asInput = model({ transport: { video: 'input_video' } });
+  assert.deepEqual(convert([{ type: 'audio', data: 'data:audio/mpeg;base64,UklG' }]), [
+    { type: 'input_audio', input_audio: { data: 'UklG', format: 'mp3' } },
+  ]);
+  assert.deepEqual(convert([{ type: 'video', data: 'data:video/quicktime;base64,AAAA' }], asInput), [
+    { type: 'input_video', input_video: { data: 'AAAA', format: 'mov' } },
+  ]);
+  // format/mime explícitos continuam valendo sobre o do prefixo
+  assert.deepEqual(convert([{ type: 'audio', data: 'data:audio/mpeg;base64,UklG', format: 'wav' }]), [
+    { type: 'input_audio', input_audio: { data: 'UklG', format: 'wav' } },
+  ]);
+  assert.deepEqual(convert([{ type: 'video', data: 'data:video/quicktime;base64,AAAA', mime: 'video/mp4' }], asInput), [
+    { type: 'input_video', input_video: { data: 'AAAA', format: 'mp4' } },
+  ]);
+});

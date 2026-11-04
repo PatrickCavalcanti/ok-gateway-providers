@@ -6,6 +6,7 @@ import { createClient } from '../src/client.js';
 import { resolveCompat } from '../src/compat.js';
 import * as lib from '../src/index.js';
 import { buildRequest, toGeminiContents } from '../src/apis/google-generative-ai.js';
+import { buildRequest as openaiBuildRequest } from '../src/apis/openai-completions.js';
 
 const account = { id: 'g', provider: 'google', api: 'google-generative-ai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKey: 'AIza-test' };
 const model = { id: 'gemini-3.5-flash', operations: ['chat'], input: ['text', 'image', 'audio', 'video', 'file'], output: ['text'] };
@@ -447,7 +448,7 @@ test('sem usageMetadata: uso missing, custo none (nunca US$ 0)', async () => {
   assert.deepEqual(result.cost, { usd: null, source: 'none' });
 });
 
-test('partes que o fio não lê (código executável, texto vazio) são ignoradas sem erro', async () => {
+test('partes que o fio não lê (código executável, texto vazio) são ignoradas quando a resposta tem conteúdo', async () => {
   const sse = 'data: {"candidates":[{"content":{"parts":[{"text":""},{"executableCode":{"language":"PYTHON","code":"1+1"}},{"text":"ok"}],"role":"model"},"finishReason":"STOP"}]}\n\n';
   const { events } = await chat(sse);
   assert.deepEqual(events.slice(0, 1), [{ type: 'text', text: 'ok' }]);
@@ -461,4 +462,117 @@ test('o pedido sai pelo cliente com a chave no header e o corpo do fio', async (
   assert.equal(f.last.init.headers['x-goog-api-key'], 'AIza-test');
   assert.equal(f.last.init.headers['x-extra'], '1');
   assert.deepEqual(f.last.body.systemInstruction, { parts: [{ text: 's' }] });
+});
+
+// ---------------------------------------------------------------------------------------
+// correções da revisão da Fase 3
+
+test('Gemini: áudio e vídeo em data-url dispensam format e mime', () => {
+  const [c] = toGeminiContents([{ role: 'user', content: [
+    { type: 'audio', data: 'data:audio/mp3;base64,QQ==' },
+    { type: 'video', data: 'data:video/mp4;base64,Qg==' },
+    { type: 'audio', data: 'data:audio/wav;base64,Qw==', format: 'mp3' }, // o prefixo vence, como em image e file
+  ] }], ctx);
+  assert.deepEqual(c.parts, [
+    { inlineData: { mimeType: 'audio/mp3', data: 'QQ==' } },
+    { inlineData: { mimeType: 'video/mp4', data: 'Qg==' } },
+    { inlineData: { mimeType: 'audio/wav', data: 'Qw==' } },
+  ]);
+  throwsType(() => toGeminiContents([{ role: 'user', content: [{ type: 'audio', data: 'data:;base64,QQ==' }] }], ctx), 'invalid_request', false);
+});
+
+/** Chunk de uma resposta só com as partes dadas e o finishReason. */
+const withParts = (/** @type {unknown[]} */ parts, reason = 'STOP') =>
+  `data: ${JSON.stringify({ candidates: [{ content: { parts, role: 'model' }, finishReason: reason }] })}\n\n`;
+
+test('resposta só com partes que o fio não modela dá unsupported, dizendo qual veio', async () => {
+  const casos = [
+    [{ inlineData: { mimeType: 'image/png', data: 'QQ==' } }, 'inlineData'],
+    [{ executableCode: { language: 'PYTHON', code: '1+1' } }, 'executableCode'],
+    [{ codeExecutionResult: { outcome: 'OUTCOME_OK', output: '2' } }, 'codeExecutionResult'],
+  ];
+  for (const [part, nome] of casos) {
+    const e = await chatError(withParts([part]));
+    assert.equal(e.type, 'unsupported', nome);
+    assert.equal(e.retryOther, true);
+    assert.equal(e.emitted, false);
+    assert.match(e.message, new RegExp(nome));
+  }
+  // vale também para length; thoughtSignature e texto vazio sozinhos não são parte desconhecida
+  assert.equal((await chatError(withParts([{ inlineData: { mimeType: 'image/png', data: 'QQ==' } }], 'MAX_TOKENS'))).type, 'unsupported');
+  assert.equal((await chat(withParts([{ text: '', thoughtSignature: 'abc' }]))).result.finishReason, 'stop');
+  assert.equal((await chat(withParts([{ thoughtSignature: 'abc' }]))).result.finishReason, 'stop');
+});
+
+test('parte desconhecida com algo emitido, ou com content_filter, é ignorada', async () => {
+  const inline = { inlineData: { mimeType: 'image/png', data: 'QQ==' } };
+  const a = await chat(withParts([{ text: 'legenda' }, inline]));
+  assert.deepEqual(a.events[0], { type: 'text', text: 'legenda' });
+  assert.equal(a.result.finishReason, 'stop');
+  const b = await chat(withParts([{ functionCall: { name: 'f', args: {} } }, inline]));
+  assert.equal(b.result.finishReason, 'tool_calls');
+  const c = await chat(withParts([{ thought: true, text: 'pensando' }, inline]));
+  assert.equal(c.events[0].type, 'reasoning');
+  const d = await chat(withParts([inline], 'SAFETY'));
+  assert.equal(d.result.finishReason, 'content_filter');
+  // emitido em chunk anterior também conta
+  const e = await chat(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'a' }] } }] })}\n\n${withParts([inline])}`);
+  assert.equal(e.result.finishReason, 'stop');
+});
+
+test('parameters só some quando o schema é um objeto vazio de verdade', () => {
+  const tool = (/** @type {any} */ parameters) => build({ messages: hi, tools: [{ name: 'f', parameters }] }).body.tools[0].functionDeclarations[0];
+  assert.equal('parameters' in tool({ type: 'object' }), false);
+  assert.equal('parameters' in tool({ type: 'object', properties: {} }), false);
+  for (const schema of [
+    { type: 'object', required: ['a'] },
+    { type: 'object', properties: {}, required: [] },
+    { type: 'object', $defs: { x: { type: 'string' } } },
+    { type: 'object', additionalProperties: false },
+    { type: 'object', $schema: 'http://json-schema.org/draft-07/schema#' },
+    { type: 'string' },
+  ]) assert.deepEqual(tool(schema).parameters, schema);
+});
+
+test('usage.reasoning fica ausente com thoughtsTokenCount 0 ou ausente', async () => {
+  const chunk = (/** @type {object} */ u) => `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'x' }] }, finishReason: 'STOP' }], usageMetadata: u })}\n\n`;
+  assert.equal('reasoning' in (await chat(chunk({ promptTokenCount: 3, candidatesTokenCount: 1, thoughtsTokenCount: 0 }))).result.usage, false);
+  assert.equal('reasoning' in (await chat(chunk({ promptTokenCount: 3, candidatesTokenCount: 1 }))).result.usage, false);
+  assert.equal((await chat(chunk({ promptTokenCount: 3, candidatesTokenCount: 1, thoughtsTokenCount: 5 }))).result.usage.reasoning, 5);
+});
+
+test('params.generationConfig que não é objeto dá invalid_request, não some', () => {
+  for (const generationConfig of [null, 'x', 3, [1]]) {
+    throwsType(() => build({ messages: hi, params: { generationConfig } }), 'invalid_request', false);
+    throwsType(() => build({ messages: hi }, { mdl: { ...model, params: { generationConfig } } }), 'invalid_request', false);
+  }
+  assert.equal('generationConfig' in build({ messages: hi, params: { generationConfig: undefined } }).body, false);
+});
+
+function openaiBuild(/** @type {any} */ request) {
+  const acc = { id: 'o', provider: 'acme', api: 'openai-completions', baseUrl: 'https://acme.test/v1', apiKey: 'k' };
+  const mdl = { id: 'm', operations: ['chat'], input: ['text'], output: ['text'] };
+  return openaiBuildRequest({ account: /** @type {any} */ (acc), model: /** @type {any} */ (mdl), compat: resolveCompat(acc, mdl), request, apiKey: 'k' });
+}
+
+test('tool com toolName: o nome vem da mensagem, mesmo sem a chamada na lista', () => {
+  // sufixo depois de um cachedContent: a chamada ficou no prefixo cacheado
+  const out = toGeminiContents([
+    { role: 'tool', toolCallId: 'gemini-tc-0', toolName: 'clima', content: '30 graus' },
+    { role: 'user', content: 'e agora?' },
+  ], ctx);
+  assert.deepEqual(out[0], { role: 'function', parts: [{ functionResponse: { name: 'clima', response: { content: '30 graus' } } }] });
+  // toolName vence o mapa; sem toolCallId, toolName basta
+  const mapa = toGeminiContents([
+    { role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'do_mapa', arguments: '{}' }] },
+    { role: 'tool', toolCallId: 'a', toolName: 'da_mensagem', content: 'r' },
+    { role: 'tool', toolName: 'so_nome', content: 'r2' },
+  ], ctx);
+  assert.deepEqual(mapa[1].parts.map((p) => p.functionResponse.name), ['da_mensagem', 'so_nome']);
+  // nenhum dos dois: continua invalid_request
+  throwsType(() => toGeminiContents([{ role: 'tool', toolCallId: 'x', content: 'r' }], ctx), 'invalid_request', false);
+  throwsType(() => toGeminiContents([{ role: 'tool', content: 'r' }], ctx), 'invalid_request', false);
+  // os outros fios ignoram o campo
+  const oa = openaiBuild({ messages: [{ role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'f', arguments: '{}' }] }, { role: 'tool', toolCallId: 'a', toolName: 'f', content: 'r' }] });
+  assert.deepEqual(oa.body.messages[1], { role: 'tool', tool_call_id: 'a', content: 'r' });
 });

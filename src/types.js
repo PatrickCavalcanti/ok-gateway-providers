@@ -96,7 +96,7 @@
 /**
  * @typedef {{ type: 'text', text: string, cache?: CacheMark }
  *   | { type: 'image', data?: string, url?: string, mime?: string }
- *   | { type: 'audio', data: string, format: string }
+ *   | { type: 'audio', data: string, format?: string }
  *   | { type: 'video', data?: string, url?: string, mime?: string }
  *   | { type: 'file', data?: string, url?: string, mime?: string, name?: string, cache?: CacheMark }} Part
  */
@@ -109,6 +109,8 @@
  * @property {string | Part[]} content
  * @property {ToolCall[]} [toolCalls]   só no papel assistant
  * @property {string} [toolCallId]      só no papel tool
+ * @property {string} [toolName]        só no papel tool: nome da tool chamada. O fio Google o usa quando a
+ *   chamada não está na lista (ficou num prefixo cacheado); os outros fios ignoram
  */
 
 /** @typedef {{ name: string, description?: string, parameters: Record<string, unknown> }} Tool */
