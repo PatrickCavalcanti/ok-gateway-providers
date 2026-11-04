@@ -24,6 +24,36 @@ export function parseStream(events: AsyncIterable<import("../sse.js").SSEEvent>,
 /** @typedef {{ provider: string, model: string }} Ctx */
 export const api: "openai-responses";
 export { operations } from "./openai-completions.js";
+export type CallRecord = {
+    /**
+     * ordem de criação
+     */
+    n: number;
+    /**
+     * apelidos: id, call_id, item_id e `#output_index`
+     */
+    keys: Set<string>;
+    callId: string;
+    itemId: string;
+    name: string;
+    /**
+     * acumulado dos deltas
+     */
+    args: string;
+    /**
+     * `arguments` de um item (done ou final); vence o acumulado
+     */
+    itemArgs: string;
+    /**
+     * recebeu `output_item.done`
+     */
+    closed: boolean;
+    /**
+     * casou com um item de `response.output`
+     */
+    inFinal: boolean;
+    emitted: boolean;
+};
 export type ApiModule = import("../types.js").ApiModule;
 export type Message = import("../types.js").Message;
 export type Part = import("../types.js").Part;

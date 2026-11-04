@@ -3,7 +3,13 @@ import { ProviderError } from '../../errors.js';
 import { makeUsage, num, reportedCost } from '../../usage.js';
 
 const PROTECTED = new Set(['model', 'prompt', 'response_format']);
-const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** Base64 canônico (como o do Gateway): tamanho múltiplo de 4, só o alfabeto e sem bits sobrando no fim. @param {string} value */
+function isCanonicalBase64(value) {
+  if (value.length === 0 || value.length % 4 !== 0 || !BASE64.test(value)) return false;
+  return Buffer.from(value, 'base64').toString('base64') === value;
+}
 
 /** @type {import('../../types.js').OperationModule} */
 export const imageGeneration = {
@@ -34,8 +40,10 @@ export const imageGeneration = {
     if (typeof n === 'number' && data.length !== n) throw fail(`pedidas ${n} imagens, vieram ${data.length}`);
     const images = data.map((/** @type {any} */ item) => {
       const b64 = item?.b64_json;
-      if (typeof b64 !== 'string' || b64.length % 4 !== 0 || !BASE64.test(b64)) throw fail('imagem com base64 inválido');
-      return { base64: b64, mediaType: item.media_type ?? 'image/png' };
+      if (typeof b64 !== 'string' || !isCanonicalBase64(b64)) throw fail('imagem com base64 inválido');
+      // `media_type` vazio ou só espaço não diz nada: cai no padrão.
+      const mediaType = typeof item.media_type === 'string' && item.media_type.trim() ? item.media_type : 'image/png';
+      return { base64: b64, mediaType };
     });
     const u = json.usage ?? {};
     const usage = makeUsage({ input: num(u.prompt_tokens), output: num(u.completion_tokens), raw: json.usage });

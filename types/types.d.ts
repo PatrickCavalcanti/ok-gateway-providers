@@ -5,7 +5,7 @@ export type Compat = {
     supportsDeveloperRole?: boolean | undefined;
     supportsStore?: boolean | undefined;
     supportsTemperature?: boolean | undefined;
-    reasoningFormat?: "reasoning_effort" | "reasoning_object" | "anthropic_thinking" | "none" | undefined;
+    reasoningFormat?: "none" | "reasoning_effort" | "reasoning_object" | "anthropic_thinking" | undefined;
     thinkingByDefault?: boolean | undefined;
     structuredOutput?: "none" | "response_format" | "top_level_json_schema" | "output_config" | "response_json_schema" | "text_format" | undefined;
     usageInStream?: boolean | undefined;
@@ -111,6 +111,7 @@ export type Part = {
     data?: string;
     url?: string;
     mime?: string;
+    cache?: CacheMark;
 } | {
     type: "audio";
     data: string;
@@ -216,6 +217,111 @@ export type ChatRequest = {
     timeouts?: import("./timeouts.js").Timeouts | undefined;
 };
 /**
+ * o que todo pedido aceita
+ */
+export type CallOptions = {
+    signal?: AbortSignal | undefined;
+    /**
+     * vence o `timeouts` da conta
+     */
+    timeouts?: import("./timeouts.js").Timeouts | undefined;
+};
+/**
+ * O que todo resultado de operação traz, além do dado.
+ */
+export type OperationResult = {
+    usage: Usage;
+    /**
+     * `usd: null` quando não há como calcular (a política de "nunca faturar zero" é de quem cobra)
+     */
+    cost: CostResult;
+    /**
+     * header `x-generation-id`, quando vier
+     */
+    generationId?: string | undefined;
+};
+export type EmbedRequest = CallOptions & {
+    texts: string[];
+    dimensions?: number;
+    params?: Record<string, unknown>;
+};
+export type EmbedResult = OperationResult & {
+    vectors: number[][];
+};
+export type TranscribeRequest = CallOptions & {
+    audio: Uint8Array;
+    mime: string;
+    filename?: string;
+    language?: string;
+    prompt?: string;
+    params?: Record<string, unknown>;
+};
+export type TranscribeResult = OperationResult & {
+    text: string;
+    durationSeconds?: number;
+};
+export type SpeakRequest = CallOptions & {
+    text: string;
+    voice?: string;
+    format?: string;
+    instructions?: string;
+    speed?: number;
+    params?: Record<string, unknown>;
+};
+export type SpeakResult = OperationResult & {
+    audio: Uint8Array;
+    contentType: string;
+};
+export type GenerateImageRequest = CallOptions & {
+    prompt: string;
+    params?: Record<string, unknown>;
+};
+export type GenerateImageResult = OperationResult & {
+    images: {
+        base64: string;
+        mediaType: string;
+    }[];
+};
+/**
+ * Uma pergunta da decisão. O formato fica com o serviço; o conhecido é `{ type, instructions, criteria }`.
+ */
+export type DecisionQuestion = {
+    type?: string;
+    instructions?: string;
+    criteria?: Record<string, string>;
+} & Record<string, unknown>;
+export type DecideRequest = CallOptions & {
+    state: Record<string, unknown>;
+    questions: Record<string, DecisionQuestion>;
+    params?: Record<string, unknown>;
+};
+export type DecideResult = OperationResult & {
+    answers: Record<string, unknown>;
+};
+/**
+ * Operação (nome do vocabulário) → [pedido, resultado]. `runOperation` e o cliente leem daqui.
+ */
+export type OperationTypes = {
+    embeddings: [EmbedRequest, EmbedResult];
+    transcription: [TranscribeRequest, TranscribeResult];
+    speech: [SpeakRequest, SpeakResult];
+    "image-generation": [GenerateImageRequest, GenerateImageResult];
+    decision: [DecideRequest, DecideResult];
+};
+/**
+ * O cliente de uma conta e um modelo. Cada método atende uma operação de `METHODS_BY_OPERATION`.
+ */
+export type Client = {
+    account: Account;
+    model: Model;
+    chat: (request: ChatRequest) => import("./client.js").Run;
+    embed: (request: EmbedRequest) => Promise<EmbedResult>;
+    transcribe: (request: TranscribeRequest) => Promise<TranscribeResult>;
+    speak: (request: SpeakRequest) => Promise<SpeakResult>;
+    generateImage: (request: GenerateImageRequest) => Promise<GenerateImageResult>;
+    decide: (request: DecideRequest) => Promise<DecideResult>;
+};
+/**
  * `input` sem o cache lido nem gravado. `cacheWrite` = escrita de 5 min; `cacheWrite1h`
  * = escrita de 1 h (disjuntos).
  */
@@ -258,11 +364,17 @@ export type ChatEvent = {
     finishReason: string;
     usage: Usage;
     cost: CostResult;
+    generationId?: string;
 };
+/**
+ * `generationId`: id da geração no provedor (header `x-generation-id`), para diagnóstico; some quando o
+ * provedor não manda.
+ */
 export type ChatResult = {
     finishReason: string;
     usage: Usage;
     cost: CostResult;
+    generationId?: string;
 };
 /**
  * O que o fio devolve no `return` do `parseStream`.

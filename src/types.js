@@ -95,7 +95,7 @@
 
 /**
  * @typedef {{ type: 'text', text: string, cache?: CacheMark }
- *   | { type: 'image', data?: string, url?: string, mime?: string }
+ *   | { type: 'image', data?: string, url?: string, mime?: string, cache?: CacheMark }
  *   | { type: 'audio', data: string, format?: string }
  *   | { type: 'video', data?: string, url?: string, mime?: string }
  *   | { type: 'file', data?: string, url?: string, mime?: string, name?: string, cache?: CacheMark }
@@ -150,6 +150,97 @@
  * @property {import('./timeouts.js').Timeouts} [timeouts]
  */
 
+// ---------------------------------------------------------------------------------------
+// Operações de chamada única (spec T1.2 §3): um par pedido/resultado por método do cliente.
+
+/**
+ * @typedef {object} CallOptions  o que todo pedido aceita
+ * @property {AbortSignal} [signal]
+ * @property {Timeouts} [timeouts]  vence o `timeouts` da conta
+ */
+
+/**
+ * O que todo resultado de operação traz, além do dado.
+ * @typedef {object} OperationResult
+ * @property {Usage} usage
+ * @property {CostResult} cost  `usd: null` quando não há como calcular (a política de "nunca faturar zero" é de quem cobra)
+ * @property {string} [generationId]  header `x-generation-id`, quando vier
+ */
+
+/**
+ * @typedef {CallOptions & {
+ *   texts: string[],
+ *   dimensions?: number,
+ *   params?: Record<string, unknown>,
+ * }} EmbedRequest
+ */
+/** @typedef {OperationResult & { vectors: number[][] }} EmbedResult */
+
+/**
+ * @typedef {CallOptions & {
+ *   audio: Uint8Array,
+ *   mime: string,
+ *   filename?: string,
+ *   language?: string,
+ *   prompt?: string,
+ *   params?: Record<string, unknown>,
+ * }} TranscribeRequest
+ */
+/** @typedef {OperationResult & { text: string, durationSeconds?: number }} TranscribeResult */
+
+/**
+ * @typedef {CallOptions & {
+ *   text: string,
+ *   voice?: string,
+ *   format?: string,
+ *   instructions?: string,
+ *   speed?: number,
+ *   params?: Record<string, unknown>,
+ * }} SpeakRequest
+ */
+/** @typedef {OperationResult & { audio: Uint8Array, contentType: string }} SpeakResult */
+
+/** @typedef {CallOptions & { prompt: string, params?: Record<string, unknown> }} GenerateImageRequest */
+/** @typedef {OperationResult & { images: { base64: string, mediaType: string }[] }} GenerateImageResult */
+
+/**
+ * Uma pergunta da decisão. O formato fica com o serviço; o conhecido é `{ type, instructions, criteria }`.
+ * @typedef {{ type?: string, instructions?: string, criteria?: Record<string, string> } & Record<string, unknown>} DecisionQuestion
+ */
+/**
+ * @typedef {CallOptions & {
+ *   state: Record<string, unknown>,
+ *   questions: Record<string, DecisionQuestion>,
+ *   params?: Record<string, unknown>,
+ * }} DecideRequest
+ */
+/** @typedef {OperationResult & { answers: Record<string, unknown> }} DecideResult */
+
+/**
+ * Operação (nome do vocabulário) → [pedido, resultado]. `runOperation` e o cliente leem daqui.
+ * @typedef {{
+ *   embeddings: [EmbedRequest, EmbedResult],
+ *   transcription: [TranscribeRequest, TranscribeResult],
+ *   speech: [SpeakRequest, SpeakResult],
+ *   'image-generation': [GenerateImageRequest, GenerateImageResult],
+ *   decision: [DecideRequest, DecideResult],
+ * }} OperationTypes
+ */
+
+/**
+ * O cliente de uma conta e um modelo. Cada método atende uma operação de `METHODS_BY_OPERATION`.
+ * @typedef {object} Client
+ * @property {Account} account
+ * @property {Model} model
+ * @property {(request: ChatRequest) => import('./client.js').Run} chat
+ * @property {(request: EmbedRequest) => Promise<EmbedResult>} embed
+ * @property {(request: TranscribeRequest) => Promise<TranscribeResult>} transcribe
+ * @property {(request: SpeakRequest) => Promise<SpeakResult>} speak
+ * @property {(request: GenerateImageRequest) => Promise<GenerateImageResult>} generateImage
+ * @property {(request: DecideRequest) => Promise<DecideResult>} decide
+ */
+
+
 /**
  * `input` sem o cache lido nem gravado. `cacheWrite` = escrita de 5 min; `cacheWrite1h`
  * = escrita de 1 h (disjuntos).
@@ -173,10 +264,14 @@
  * @typedef {{ type: 'text', text: string }
  *   | { type: 'reasoning', text: string, signature?: string, redacted?: string }
  *   | { type: 'tool_call', id: string, name: string, arguments: string, providerData?: Record<string, unknown> }
- *   | { type: 'end', finishReason: string, usage: Usage, cost: CostResult }} ChatEvent
+ *   | { type: 'end', finishReason: string, usage: Usage, cost: CostResult, generationId?: string }} ChatEvent
  */
 
-/** @typedef {{ finishReason: string, usage: Usage, cost: CostResult }} ChatResult */
+/**
+ * `generationId`: id da geração no provedor (header `x-generation-id`), para diagnóstico; some quando o
+ * provedor não manda.
+ * @typedef {{ finishReason: string, usage: Usage, cost: CostResult, generationId?: string }} ChatResult
+ */
 
 /**
  * O que o fio devolve no `return` do `parseStream`.

@@ -5,7 +5,7 @@
 // `Model[]`. Não faz rede: quem busca é o chamador. Nada que o catálogo declara some em
 // silêncio: o que a lib não interpreta vai para `model.meta`.
 
-import { INPUT_MODALITIES, OUTPUT_MODALITIES } from '../vocabulary.js';
+import { INPUT_MODALITIES, OPERATIONS, OUTPUT_MODALITIES } from '../vocabulary.js';
 
 /** @typedef {import('../types.js').Model} Model */
 /** @typedef {import('../types.js').Cost} Cost */
@@ -107,8 +107,10 @@ export function parseOpenRouterModel(item) {
     meta.modalitiesAssumed = true;
   }
 
+  // O `/v1/models` do Gateway diz a operação do perfil em `gateway.operation`; ela vale mais que a forma.
+  const declared = isObject(item.gateway) ? item.gateway.operation : undefined;
   /** @type {Model['operations']} */
-  const operations = operationsOf(rawOutput, outputList);
+  const operations = OPERATIONS.includes(declared) ? [declared] : operationsOf(rawOutput, outputList);
 
   /** @type {Model} */
   const model = { id, operations, input: inputList, output: outputList };

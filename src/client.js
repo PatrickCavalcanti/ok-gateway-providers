@@ -9,6 +9,7 @@ import { createDeadline } from './timeouts.js';
 import { readSSE } from './sse.js';
 import { resolveCompat } from './compat.js';
 import { computeCost } from './cost.js';
+import { METHODS_BY_OPERATION } from './vocabulary.js';
 
 /** @typedef {import('./types.js').Account} Account */
 /** @typedef {import('./types.js').Model} Model */
@@ -16,6 +17,8 @@ import { computeCost } from './cost.js';
 /** @typedef {import('./types.js').ChatEvent} ChatEvent */
 /** @typedef {import('./types.js').ChatResult} ChatResult */
 /** @typedef {import('./types.js').ApiModule} ApiModule */
+/** @typedef {import('./types.js').Client} Client */
+/** @typedef {import('./types.js').OperationTypes} OperationTypes */
 
 /** @type {Map<string, ApiModule>} */
 const APIS = new Map();
@@ -35,28 +38,29 @@ export function getApi(api) { return APIS.get(api); }
 export function listApis() { return [...APIS.keys()]; }
 
 /**
+ * Os métodos de operação saem de `METHODS_BY_OPERATION` (spec §3): operação nova na tabela ganha o método sem
+ * editar o cliente. O tipo de cada método é o do typedef `Client`, que um teste confere contra a tabela.
  * @param {{ account: Account, model: Model, fetch?: typeof globalThis.fetch }} opts
+ * @returns {Client}
  */
 export function createClient({ account, model, fetch: fetchImpl }) {
   if (!account || typeof account !== 'object') throw new TypeError('createClient: account é obrigatório');
   if (!model || typeof model !== 'object') throw new TypeError('createClient: model é obrigatório');
   const doFetch = fetchImpl ?? globalThis.fetch;
-  return {
+  /** @type {Record<string, unknown>} */
+  const client = {
     account,
     model,
-    /** @param {ChatRequest} request */
-    chat(request) { return startChat({ account, model, request, doFetch }); },
-    /** @param {{ texts: string[], dimensions?: number, params?: Record<string, unknown>, signal?: AbortSignal, timeouts?: import('./timeouts.js').Timeouts }} request */
-    embed(request) { return runOperation('embeddings', { account, model, request, doFetch }); },
-    /** @param {any} request */
-    transcribe(request) { return runOperation('transcription', { account, model, request, doFetch }); },
-    /** @param {any} request */
-    speak(request) { return runOperation('speech', { account, model, request, doFetch }); },
-    /** @param {any} request */
-    generateImage(request) { return runOperation('image-generation', { account, model, request, doFetch }); },
-    /** @param {any} request */
-    decide(request) { return runOperation('decision', { account, model, request, doFetch }); },
+    chat: (/** @type {ChatRequest} */ request) => startChat({ account, model, request, doFetch }),
   };
+  for (const [operation, methods] of Object.entries(METHODS_BY_OPERATION)) {
+    if (operation === 'chat') continue;
+    const op = /** @type {keyof OperationTypes} */ (operation);
+    for (const method of methods) {
+      client[method] = (/** @type {any} */ request) => runOperation(op, { account, model, request, doFetch });
+    }
+  }
+  return /** @type {Client} */ (client);
 }
 
 /**
@@ -70,7 +74,8 @@ export function createClient({ account, model, fetch: fetchImpl }) {
 function startChat({ account, model, request, doFetch }) {
   const queue = createQueue();
   const local = new AbortController();
-  const callerSignal = request?.signal;
+  // Um `signal` que não é AbortSignal vira invalid_request lá dentro, não TypeError aqui.
+  const callerSignal = isAbortSignal(request?.signal) ? request.signal : undefined;
   const onCallerAbort = () => local.abort();
   if (callerSignal?.aborted) local.abort();
   else callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
@@ -83,10 +88,15 @@ function startChat({ account, model, request, doFetch }) {
 
   const ctx = { provider: account.provider, model: model.id };
   let emitted = false;
+  /** @type {string|undefined} */
+  let generationId;
 
   (async () => {
-    const deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: local.signal });
+    /** @type {ReturnType<typeof createDeadline>|undefined} */
+    let deadline;
     try {
+      assertSignal(request?.signal, ctx);
+      deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: local.signal });
       if (!Array.isArray(model.operations) || !model.operations.includes('chat')) {
         throw unsupported(`${account.provider}/${model.id}: o modelo não declara a operação chat`, ctx);
       }
@@ -103,23 +113,26 @@ function startChat({ account, model, request, doFetch }) {
       const built = buildOrThrow(api.buildRequest, { account, model, compat, request, apiKey }, ctx);
       // Ordem: headers fixos da conta ← compat (conta ← modelo) ← os do fio (auth, content-type), que não se sobrescrevem.
       const headers = mergeHeaders(account.headers, compat.headers, built.headers);
+      const payload = serializeBody(built.body, ctx);
       if (local.signal.aborted) throw fromFailure(new Error('aborted'), 'aborted', ctx, false);
 
       /** @type {Response} */
       let res;
       try {
-        res = await doFetch(built.url, { method: 'POST', headers, body: JSON.stringify(built.body), signal: deadline.signal });
+        res = await doFetch(built.url, { method: 'POST', headers, body: payload, signal: deadline.signal });
       } catch (err) {
         throw fromFailure(err, deadline.reason(), ctx, false);
       }
+      generationId = generationIdOf(res.headers);
       if (!res.ok) {
         let text = '';
         try { text = await res.text(); } catch { /* corpo ilegível: fica o status */ }
+        if (deadline.reason()) throw fromFailure(new Error('corpo de erro encerrado'), deadline.reason(), ctx, false);
         throw errorFromStatus(res.status, { ...ctx, body: text });
       }
       if (!res.body) throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: resposta sem corpo` });
 
-      const events = readSSE(res.body, { onChunk: () => deadline.touch() });
+      const events = readSSE(res.body, { onChunk: () => deadline?.touch() });
       const gen = api.parseStream(events, { account, model, compat, headers: res.headers });
       /** @type {import('./types.js').StreamSummary} */
       let summary;
@@ -137,17 +150,19 @@ function startChat({ account, model, request, doFetch }) {
 
       const cost = computeCost(model, summary.usage, summary.reportedCostUsd);
       /** @type {ChatResult} */
-      const final = { finishReason: summary.finishReason, usage: summary.usage, cost };
+      const final = { finishReason: summary.finishReason, usage: summary.usage, cost, ...(generationId ? { generationId } : {}) };
       queue.push({ type: 'end', ...final });
       queue.close();
       resolveResult(final);
     } catch (err) {
-      const e = err instanceof ProviderError ? err : fromFailure(err, deadline.reason(), ctx, emitted);
+      const e = err instanceof ProviderError ? err : fromFailure(err, deadline?.reason() ?? null, ctx, emitted);
       if (emitted) e.emitted = true;
+      // Um ponto só: vale para todo erro depois do fetch, venha do status, do stream ou do prazo.
+      if (generationId && !e.generationId) e.generationId = generationId;
       queue.fail(e);
       rejectResult(e);
     } finally {
-      deadline.clear();
+      deadline?.clear();
       callerSignal?.removeEventListener('abort', onCallerAbort);
     }
   })();
@@ -196,18 +211,56 @@ function buildOrThrow(fn, args, ctx) {
   }
 }
 
-/** FormData segue como está; o fetch gera o Content-Type com o boundary. @param {Record<string, unknown> | FormData} body */
-const serializeBody = (body) => (body instanceof FormData ? body : JSON.stringify(body));
+/**
+ * Corpo → o que o fetch recebe. FormData segue como está (o fetch gera o Content-Type com o boundary). Corpo que
+ * não serializa (referência circular, BigInt) é pedido malformado: outro alvo não resolve, e não é "falha de rede".
+ * @param {Record<string, unknown> | FormData} body @param {{ provider: string, model: string }} ctx
+ * @returns {string | FormData}
+ */
+function serializeBody(body, ctx) {
+  if (body instanceof FormData) return body;
+  try { return JSON.stringify(body); } catch (err) {
+    const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
+    throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, cause: err, message: `${ctx.provider}/${ctx.model}: pedido malformado — o corpo não serializa em JSON (${msg})` });
+  }
+}
+
+/** @param {unknown} v @returns {v is AbortSignal} */
+const isAbortSignal = (v) => !!v && typeof v === 'object' && typeof (/** @type {any} */ (v)).addEventListener === 'function' && 'aborted' in v;
 
 /**
- * Operação de chamada única (embeddings, transcrição, fala, imagem, decisão).
- * @param {Exclude<import('./vocabulary.js').Operation, 'chat'>} operation
- * @param {{ account: Account, model: Model, request: any, doFetch: typeof globalThis.fetch }} args
+ * `signal` que o chamador passou e não é um AbortSignal: pedido malformado, não TypeError cru.
+ * @param {unknown} signal @param {{ provider: string, model: string }} ctx
+ */
+function assertSignal(signal, ctx) {
+  if (signal !== undefined && signal !== null && !isAbortSignal(signal)) {
+    throw new ProviderError({ type: 'invalid_request', retryOther: false, ...ctx, message: `${ctx.provider}/${ctx.model}: pedido malformado — signal precisa ser um AbortSignal` });
+  }
+}
+
+/** Id da geração no provedor (header `x-generation-id`), quando veio. @param {Headers} headers @returns {string|undefined} */
+function generationIdOf(headers) {
+  const id = headers?.get?.('x-generation-id');
+  return id ? id : undefined;
+}
+
+/**
+ * Operação de chamada única (embeddings, transcrição, fala, imagem, decisão). O pedido e o resultado
+ * de cada uma estão em `OperationTypes`.
+ * @template {keyof OperationTypes} O
+ * @param {O} operation
+ * @param {{ account: Account, model: Model, request: OperationTypes[O][0], doFetch: typeof globalThis.fetch }} args
+ * @returns {Promise<OperationTypes[O][1]>}
  */
 async function runOperation(operation, { account, model, request, doFetch }) {
   const ctx = { provider: account.provider, model: model.id };
-  const deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: request?.signal });
+  /** @type {ReturnType<typeof createDeadline>|undefined} */
+  let deadline;
+  /** @type {string|undefined} */
+  let generationId;
   try {
+    assertSignal(request?.signal, ctx);
+    deadline = createDeadline({ timeouts: { ...account.timeouts, ...request?.timeouts }, signal: request?.signal });
     if (!Array.isArray(model.operations) || !model.operations.includes(operation)) {
       throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara a operação ${operation}`, ctx);
     }
@@ -220,14 +273,16 @@ async function runOperation(operation, { account, model, request, doFetch }) {
     const apiKey = await resolveKey(account, ctx);
     const built = buildOrThrow(mod.buildRequest, { ...opCtx, apiKey }, ctx);
     const headers = mergeHeaders(account.headers, compat.headers, built.headers);
+    const payload = serializeBody(built.body, ctx);
 
     /** @type {Response} */
     let res;
     try {
-      res = await doFetch(built.url, { method: 'POST', headers, body: serializeBody(built.body), signal: deadline.signal });
+      res = await doFetch(built.url, { method: 'POST', headers, body: payload, signal: deadline.signal });
     } catch (err) {
       throw fromFailure(err, deadline.reason(), ctx, false);
     }
+    generationId = generationIdOf(res.headers);
     if (!res.ok) {
       let text = '';
       try { text = await res.text(); } catch { /* corpo ilegível: fica o status */ }
@@ -238,11 +293,15 @@ async function runOperation(operation, { account, model, request, doFetch }) {
 
     const { result, usage, reportedCostUsd } = await mod.parseResponse(oneShot(res, deadline, ctx), opCtx);
     if (deadline.reason()) throw fromFailure(new Error('corpo encerrado'), deadline.reason(), ctx, false);
-    return { ...result, usage, cost: computeCost(model, usage, reportedCostUsd) };
+    return /** @type {OperationTypes[O][1]} */ (/** @type {unknown} */ ({
+      ...result, usage, cost: computeCost(model, usage, reportedCostUsd), ...(generationId ? { generationId } : {}),
+    }));
   } catch (err) {
-    throw err instanceof ProviderError ? err : fromFailure(err, deadline.reason(), ctx, false);
+    const e = err instanceof ProviderError ? err : fromFailure(err, deadline?.reason() ?? null, ctx, false);
+    if (generationId && !e.generationId) e.generationId = generationId; // um ponto só, como no chat
+    throw e;
   } finally {
-    deadline.clear();
+    deadline?.clear();
   }
 }
 
@@ -336,9 +395,9 @@ function createQueue() {
     }
   };
   return {
-    /** @param {ChatEvent} ev */ push(ev) { items.push(ev); flush(); },
+    push(/** @type {ChatEvent} */ ev) { items.push(ev); flush(); },
     close() { closed = true; flush(); },
-    /** @param {unknown} e */ fail(e) { error = e; flush(); },
+    fail(/** @type {unknown} */ e) { error = e; flush(); },
     iterator() {
       return {
         /** @returns {Promise<IteratorResult<ChatEvent>>} */
