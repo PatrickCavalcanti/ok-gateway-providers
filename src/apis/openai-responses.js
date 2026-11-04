@@ -94,9 +94,6 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     }
   }
 
-  // Só o que o chamador pediu: `model.maxTokens` é o TETO do modelo, não um valor a enviar.
-  if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
-  if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
   if (compat.supportsStore) body.store = false;
 
   // params: do modelo, depois da chamada (o último vence). Nunca sobrescrevem o que é do fio
@@ -117,6 +114,7 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   }
 
   // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
+  // `model.maxTokens` é o TETO do modelo, não um valor a enviar.
   if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
   if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
   if (request.responseSchema && compat.structuredOutput === 'top_level_json_schema') body.json_schema = request.responseSchema.schema;
@@ -334,6 +332,8 @@ export async function* parseStream(events, { account, model }) {
   const byIndex = new Map();
   /** @type {Set<string>} chamadas já emitidas */
   const closed = new Set();
+  /** Sem argumentos no output_item.done: espera o evento final. @type {{ key: string, item: any }[]} */
+  const deferred = [];
   let sawCall = false;
   let emitted = false;
   let callCount = 0;
@@ -350,14 +350,20 @@ export async function* parseStream(events, { account, model }) {
   };
 
   /**
-   * Fecha uma chamada: o item final vence o acumulado. Cortada pelo limite de tokens ou com JSON
-   * incompleto, dá erro: emitir `arguments` inválido faria o chamador executar a ferramenta com lixo.
+   * Fecha uma chamada: o item final vence o acumulado. Servidor que copia o formato pode trocar
+   * de identificador entre eventos, então a chamada é achada por qualquer um deles, e todos ficam
+   * registrados: a mesma chamada nunca sai duas vezes. Com JSON incompleto dá erro: emitir
+   * `arguments` inválido faria o chamador executar a ferramenta com lixo.
    * @param {string} key @param {any} item
    */
   const closeCall = (key, item) => {
-    const c = calls.get(key) ?? { callId: '', name: '', args: '' };
-    calls.delete(key);
+    /** @type {{ callId: string, name: string, args: string }} */
+    let c = { callId: '', name: '', args: '' };
+    for (const [k, v] of [...calls]) {
+      if (k === key || k === item.id || (v.callId && v.callId === item.call_id)) { c = { callId: v.callId || c.callId, name: v.name || c.name, args: v.args || c.args }; calls.delete(k); closed.add(k); }
+    }
     closed.add(key);
+    for (const id of [item.id, item.call_id, c.callId]) if (id) closed.add(id);
     const name = (typeof item.name === 'string' && item.name) || c.name;
     const args = (typeof item.arguments === 'string' && item.arguments) || c.args;
     if (!name) {
@@ -373,6 +379,10 @@ export async function* parseStream(events, { account, model }) {
     callCount += 1;
     return /** @type {const} */ ({ type: 'tool_call', id, name, arguments: text });
   };
+  /** @param {any} item */
+  const isClosed = (item) => (item.id !== undefined && closed.has(item.id)) || (item.call_id !== undefined && closed.has(item.call_id));
+  /** A chamada tem algum argumento até aqui? Sem nenhum, só o evento final diz se foi cortada. @param {string} key @param {any} item */
+  const hasArgs = (key, item) => (typeof item.arguments === 'string' && item.arguments.trim() !== '') || !!calls.get(key)?.args.trim();
 
   for await (const ev of events) {
     const data = ev.data.trim();
@@ -413,7 +423,9 @@ export async function* parseStream(events, { account, model }) {
 
       case 'response.output_item.done':
         if (chunk.item?.type === 'function_call') {
-          yield closeCall(keyOf(chunk, chunk.item.id), chunk.item);
+          const key = keyOf(chunk, chunk.item.id);
+          if (hasArgs(key, chunk.item)) yield closeCall(key, chunk.item);
+          else deferred.push({ key, item: chunk.item });
         }
         break;
 
@@ -446,13 +458,37 @@ export async function* parseStream(events, { account, model }) {
   if (!kind) {
     throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: stream terminou sem evento final (response.completed, response.incomplete ou response.failed)` });
   }
+  // Chamada sem nenhum argumento e resposta cortada: é o corte, não uma ferramenta sem parâmetros.
+  if (kind === 'incomplete' && deferred.length) {
+    throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: tool call cortada pelo limite, sem argumentos (${deferred[0].item.name ?? 'sem nome'})` });
+  }
+  for (const { key, item } of deferred) if (!isClosed(item)) yield closeCall(key, item);
   // Servidor que copia o formato pode não mandar output_item.done: o dado está no evento final.
-  for (const item of Array.isArray(final.output) ? final.output : []) {
-    if (item?.type === 'function_call' && item.id !== undefined && !closed.has(item.id)) yield closeCall(item.id, item);
+  const finalOutput = Array.isArray(final.output) ? final.output : [];
+  for (const item of finalOutput) {
+    if (item?.type !== 'function_call' || isClosed(item)) continue;
+    const key = item.id ?? item.call_id;
+    if (kind === 'incomplete' && !hasArgs(key, item)) {
+      throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: tool call cortada pelo limite, sem argumentos (${item.name ?? 'sem nome'})` });
+    }
+    yield closeCall(key, item);
+  }
+  // Recusa que só vem no item final, sem delta.
+  if (!refused) {
+    for (const item of finalOutput) {
+      for (const part of Array.isArray(item?.content) ? item.content : []) {
+        if (part?.type === 'refusal' && typeof part.refusal === 'string' && part.refusal) {
+          refused = true;
+          emitted = true;
+          yield { type: 'text', text: part.refusal };
+        }
+      }
+    }
   }
   // Chamada aberta sem fim nenhum não some em silêncio.
-  for (const c of calls.values()) {
-    throw new ProviderError({ type: 'upstream', ...ctx, message: `${ctx.provider}/${ctx.model}: tool call sem fim no stream (${c.name || 'sem nome'})` });
+  for (const [k, c] of calls) {
+    if (closed.has(k) || (c.callId && closed.has(c.callId))) continue;
+    throw new ProviderError({ type: 'upstream', ...ctx, emitted, message: `${ctx.provider}/${ctx.model}: tool call sem fim no stream (${c.name || 'sem nome'})` });
   }
   const finishReason = kind === 'incomplete'
     ? incompleteReason(final.incomplete_details?.reason)

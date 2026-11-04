@@ -612,3 +612,48 @@ test('temperature não vai por padrão neste fio', () => {
   const { body } = buildRequest({ account: acc, model, compat: resolveCompat(acc, model), apiKey: '', request: { messages: hi, temperature: 0.7 } });
   assert.equal('temperature' in body, false);
 });
+
+const sseOf = (lines) => lines.map((l) => `data: ${JSON.stringify(l)}\n\n`).join('');
+const fn = { type: 'function_call', call_id: 'call_1', name: 'clima', arguments: '{"cidade":"X"}' };
+const completed = (output) => ({ type: 'response.completed', response: { output, usage: { input_tokens: 1, output_tokens: 1 } } });
+const calls = (events) => events.filter((e) => e.type === 'tool_call');
+
+test('identificadores que mudam entre eventos: uma chamada só, sem erro', async () => {
+  const cenarios = {
+    'id só no done': [{ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', call_id: 'call_1', name: 'clima' } }, { type: 'response.output_item.done', output_index: 0, item: { ...fn, id: 'fc_1' } }, completed([])],
+    'added sem id, só evento final': [{ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', call_id: 'call_1', name: 'clima' } }, completed([{ ...fn, id: 'fc_1' }])],
+    'added e done sem id, final com id': [{ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', call_id: 'call_1', name: 'clima' } }, { type: 'response.output_item.done', output_index: 0, item: fn }, completed([{ ...fn, id: 'fc_1' }])],
+    'done com id diferente do added': [{ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 'fc_a', call_id: 'call_1', name: 'clima' } }, { type: 'response.output_item.done', output_index: 0, item: { ...fn, id: 'fc_b' } }, completed([{ ...fn, id: 'fc_b' }])],
+    'delta com item_id igual ao call_id': [{ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 'fc_a', call_id: 'call_1', name: 'clima' } }, { type: 'response.function_call_arguments.delta', output_index: 0, item_id: 'call_1', delta: '{"cidade":"X"}' }, { type: 'response.output_item.done', output_index: 0, item: { ...fn, id: 'fc_a' } }, completed([])],
+  };
+  for (const [nome, lines] of Object.entries(cenarios)) {
+    const { events, result } = await chat(sseOf(lines), { request: { messages: hi, tools } });
+    assert.equal(calls(events).length, 1, nome);
+    assert.equal(calls(events)[0].id, 'call_1', nome);
+    assert.equal(result.finishReason, 'tool_calls', nome);
+  }
+});
+
+test('corte pelo limite sem nenhum argumento dá upstream, nunca chamada com {}', async () => {
+  const empty = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'clima', arguments: '' };
+  const incomplete = (output) => ({ type: 'response.incomplete', response: { output, incomplete_details: { reason: 'max_output_tokens' }, usage: { input_tokens: 1, output_tokens: 1 } } });
+  for (const lines of [
+    [{ type: 'response.output_item.added', output_index: 0, item: empty }, { type: 'response.output_item.done', output_index: 0, item: empty }, incomplete([empty])],
+    [{ type: 'response.output_item.added', output_index: 0, item: empty }, incomplete([empty])],
+  ]) {
+    await assert.rejects(chat(sseOf(lines), { request: { messages: hi, tools } }), (e) => e.type === 'upstream' && /cortada/.test(e.message));
+  }
+});
+
+test('ferramenta sem argumentos, com a resposta completa: arguments {}', async () => {
+  const empty = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'clima', arguments: '' };
+  const { events } = await chat(sseOf([{ type: 'response.output_item.done', output_index: 0, item: empty }, completed([empty])]), { request: { messages: hi, tools } });
+  assert.equal(calls(events).length, 1);
+  assert.equal(calls(events)[0].arguments, '{}');
+});
+
+test('recusa só no item final: vira texto e content_filter', async () => {
+  const { events, result } = await chat(sseOf([completed([{ type: 'message', content: [{ type: 'refusal', refusal: 'Não posso.' }] }])]));
+  assert.deepEqual(events[0], { type: 'text', text: 'Não posso.' });
+  assert.equal(result.finishReason, 'content_filter');
+});
