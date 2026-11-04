@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./vocabulary.js";
 export { readSSE } from "./sse.js";
+export { toGeminiContents } from "./apis/google-generative-ai.js";
 export { createCreditConverter } from "./credits.js";
 export { parseOpenRouterModels } from "./catalog/openrouter.js";
 export { createClient, registerApi, getApi, listApis } from "./client.js";
@@ -8,3 +9,4 @@ export { ProviderError, errorFromStatus, unsupported, typeFromStatus, truncateBo
 export { createDeadline, DEFAULT_TIMEOUTS } from "./timeouts.js";
 export { resolveCompat, DEFAULT_COMPAT } from "./compat.js";
 export { computeCost, tierFor } from "./cost.js";
+export { makeUsage, reportedCost } from "./usage.js";

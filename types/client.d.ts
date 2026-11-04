@@ -16,6 +16,37 @@ export function createClient({ account, model, fetch: fetchImpl }: {
     model: import("./types.js").Model;
     /** @param {ChatRequest} request */
     chat(request: ChatRequest): Run;
+    /** @param {{ texts: string[], dimensions?: number, params?: Record<string, unknown>, signal?: AbortSignal, timeouts?: import('./timeouts.js').Timeouts }} request */
+    embed(request: {
+        texts: string[];
+        dimensions?: number;
+        params?: Record<string, unknown>;
+        signal?: AbortSignal;
+        timeouts?: import("./timeouts.js").Timeouts;
+    }): Promise<{
+        usage: import("./types.js").Usage;
+        cost: import("./types.js").CostResult;
+    }>;
+    /** @param {any} request */
+    transcribe(request: any): Promise<{
+        usage: import("./types.js").Usage;
+        cost: import("./types.js").CostResult;
+    }>;
+    /** @param {any} request */
+    speak(request: any): Promise<{
+        usage: import("./types.js").Usage;
+        cost: import("./types.js").CostResult;
+    }>;
+    /** @param {any} request */
+    generateImage(request: any): Promise<{
+        usage: import("./types.js").Usage;
+        cost: import("./types.js").CostResult;
+    }>;
+    /** @param {any} request */
+    decide(request: any): Promise<{
+        usage: import("./types.js").Usage;
+        cost: import("./types.js").CostResult;
+    }>;
 };
 export type Run = AsyncIterable<ChatEvent> & {
     result: Promise<ChatResult>;

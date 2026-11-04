@@ -19,6 +19,7 @@ export function parseStream(events: AsyncIterable<import("../sse.js").SSEEvent>,
     account: import("../types.js").Account;
     model: import("../types.js").Model;
     compat: import("../types.js").ResolvedCompat;
+    headers: Headers;
 }): AsyncGenerator<Exclude<import("../types.js").ChatEvent, {
     type: "end";
 }>, import("../types.js").StreamSummary, undefined>;
@@ -27,6 +28,13 @@ export function parseStream(events: AsyncIterable<import("../sse.js").SSEEvent>,
 /** @typedef {import('../types.js').Part} Part */
 /** @typedef {import('../types.js').Usage} Usage */
 export const api: "openai-completions";
+export const operations: {
+    embeddings: import("../types.js").OperationModule;
+    transcription: import("../types.js").OperationModule;
+    speech: import("../types.js").OperationModule;
+    'image-generation': import("../types.js").OperationModule;
+    decision: import("../types.js").OperationModule;
+};
 export type ApiModule = import("../types.js").ApiModule;
 export type Message = import("../types.js").Message;
 export type Part = import("../types.js").Part;

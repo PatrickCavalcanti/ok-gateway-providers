@@ -7,9 +7,11 @@ Fala com provedores de IA a partir de três entradas: uma **conta**, um **modelo
 - **Não guarda nada, não roteia e não repete chamadas.** Retry, fallback, armazenamento e
   planejamento de cache são do cliente. A lib dá o que ele precisa para decidir:
   `retryOther` e `emitted` no erro.
-- Fios do núcleo (`0.1`): `openai-completions` (OpenAI em estilo chat, OpenRouter, Groq,
-  Ollama `/v1`, Inception, DeepSeek, llama.cpp, Igris Gateway) e `anthropic-messages`.
-  Operação `chat`, com tools, saída estruturada, raciocínio e anexos.
+- Fios: `openai-completions` (OpenAI em estilo chat, OpenRouter, Groq, Ollama `/v1`,
+  Inception, DeepSeek, llama.cpp, Igris Gateway), `openai-responses`, `anthropic-messages` e
+  `google-generative-ai`.
+- Operações: `chat`, com tools, saída estruturada, raciocínio e anexos; embeddings,
+  transcrição, fala, geração de imagem e decisão.
 
 ## Instalar
 
@@ -17,7 +19,7 @@ Pela URL do tarball da tag (funciona sem git na máquina, e no pnpm):
 
 ```json
 "dependencies": {
-  "ok-gateway-providers": "https://github.com/PatrickCavalcanti/ok-gateway-providers/archive/refs/tags/v0.1.0.tar.gz"
+  "ok-gateway-providers": "https://github.com/PatrickCavalcanti/ok-gateway-providers/archive/refs/tags/v0.2.0.tar.gz"
 }
 ```
 
@@ -187,3 +189,74 @@ cada tag.
 ## Licença
 
 MIT.
+
+## Outras operações
+
+São chamada única: devolvem uma `Promise`, sem eventos. Todas resolvem com `usage` e `cost`, e
+aceitam `signal` e `timeouts`, que vencem os da conta. Modelo sem a operação em `operations`, ou
+fio que não a implementa, dá `unsupported` antes do fetch.
+
+```js
+const client = createClient({ account, model });
+
+const { vectors } = await client.embed({ texts: ['olá'], dimensions: 768 });
+const { text, durationSeconds } = await client.transcribe({ audio: bytes, mime: 'audio/mpeg', language: 'pt' });
+const { audio, contentType } = await client.speak({ text: 'Olá', voice: 'onyx', format: 'mp3' });
+const { images } = await client.generateImage({ prompt: 'um gato', params: { n: 1 } });
+const { answers } = await client.decide({ state: {}, questions: {} });
+```
+
+- Na fala, `usage.input` é o número de caracteres, e `cost.input` é US$ por milhão de caracteres.
+- Sem custo informado e sem tabela, `cost.usd` é `null`. A lib não inventa valor, e "nunca faturar
+  zero" é regra de quem cobra.
+- A lib não converte PCM em WAV, não normaliza idioma e não detecta o formato do áudio pelos bytes.
+
+## `compat` por provedor
+
+| Provedor | `api` | `compat` da conta |
+|---|---|---|
+| OpenRouter | `openai-completions` | `{ usageInStream: true, providerRouting: true, reasoningFormat: 'reasoning_object', imagePath: '/images', imageResponseFormat: null, decisionPath: '../alpha/decisions' }` |
+| OpenAI, estilo chat | `openai-completions` | `{ usageInStream: true, maxTokensField: 'max_completion_tokens', reasoningFormat: 'reasoning_effort', structuredOutput: 'response_format', ttsDefaultVoice: 'onyx', ttsDefaultFormat: 'mp3' }` |
+| OpenAI, Responses | `openai-responses` | `{ structuredOutput: 'text_format', reasoningFormat: 'reasoning_object' }` |
+| Groq | `openai-completions` | `{ sttResponseFormat: 'verbose_json' }` |
+| TypeSafe | `openai-completions` | `{ decisionPath: 'systemone' }` |
+| Anthropic | `anthropic-messages` | padrão. No modelo da geração 5: `{ thinkingByDefault: true, supportsTemperature: false }` |
+| Google | `google-generative-ai` | padrão |
+
+No `whisper-1`, o modelo sobrescreve com `{ sttResponseFormat: 'verbose_json' }`.
+
+`effort` e `reasoning.maxTokens` não vão juntos: o OpenRouter recusa, e a lib dá `invalid_request`.
+O que o pedido traz explícito (`toolChoice`, `stop`, `maxTokens`, `temperature`, `responseSchema`)
+vence `params`.
+
+## Devolver o histórico
+
+Para continuar uma conversa com tools, devolva o raciocínio assinado e os `providerData` que
+vieram. `signature` fecha um bloco de raciocínio. Cada fio ignora ou aproveita o que recebe, então
+trocar de provedor no meio da conversa não quebra o corpo.
+
+```js
+const content = [];
+const toolCalls = [];
+let thinking = null;
+
+for await (const ev of run) {
+  if (ev.type === 'reasoning') {
+    if (ev.redacted) content.push({ type: 'reasoning', text: '', redacted: ev.redacted });
+    else {
+      thinking ??= { type: 'reasoning', text: '' };
+      thinking.text += ev.text ?? '';
+      if (ev.signature) { content.push({ ...thinking, signature: ev.signature }); thinking = null; }
+    }
+  } else if (ev.type === 'text') content.push({ type: 'text', text: ev.text });
+  else if (ev.type === 'tool_call') toolCalls.push({ id: ev.id, name: ev.name, arguments: ev.arguments, providerData: ev.providerData });
+}
+
+messages.push({ role: 'assistant', content, toolCalls });
+```
+
+## Catálogo
+
+`parseOpenRouterModels` lê o `/models` do OpenRouter. **Peça `?output_modalities=all`**: sem isso a
+API só lista modelos de saída texto, e os de fala, transcrição, decisão e imagem não aparecem.
+Saída que o vocabulário não conhece (vídeo, rerank) fica com `operations: []`.
