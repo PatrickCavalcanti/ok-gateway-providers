@@ -193,3 +193,21 @@ test('operação por modalidade de saída: só text segue chat', () => {
   const m = parseOpenRouterModel({ id: 't/chat-txt', architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
   assert.deepEqual(m?.operations, ['chat']);
 });
+
+test('catálogo completo: saída nomeada pela operação', () => {
+  const of = (input_modalities, output_modalities) => parseOpenRouterModel({ id: 'x/y', architecture: { input_modalities, output_modalities } });
+  const tts = of(['text'], ['speech']);
+  assert.deepEqual([tts.operations, tts.output], [['speech'], ['audio']]);
+  const stt = of(['audio'], ['transcription']);
+  assert.deepEqual([stt.operations, stt.input, stt.output], [['transcription'], ['audio'], ['text']]);
+  const jev = of(['text', 'image'], ['decisions']);
+  assert.deepEqual([jev.operations, jev.output], [['decision'], ['text']]);
+});
+
+test('saída fora do vocabulário não vira chat', () => {
+  const video = parseOpenRouterModel({ id: 'x/v', architecture: { input_modalities: ['text'], output_modalities: ['video'] } });
+  assert.deepEqual(video.operations, []);
+  assert.deepEqual(video.meta.unknownModalities, { output: ['video'] });
+  const rerank = parseOpenRouterModel({ id: 'x/r', architecture: { input_modalities: ['text'], output_modalities: ['rerank'] } });
+  assert.deepEqual(rerank.operations, []);
+});

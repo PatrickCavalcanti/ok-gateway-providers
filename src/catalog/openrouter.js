@@ -45,6 +45,28 @@ function splitModalities(list, universe) {
 }
 
 /**
+ * O catálogo completo (`/models?output_modalities=all`) nomeia a saída pela operação.
+ * @type {Record<string, 'text'|'audio'>}
+ */
+const OUTPUT_ALIAS = { speech: 'audio', transcription: 'text', decisions: 'text' };
+
+/**
+ * Saída mista segue no chat. Saída que o vocabulário não conhece (vídeo, rerank) não vira
+ * operação nenhuma: dizer `chat` faria o modelo aparecer onde não funciona.
+ * @param {unknown[]} raw @param {string[]} known @returns {Model['operations']}
+ */
+function operationsOf(raw, known) {
+  if (raw.includes('decisions')) return ['decision'];
+  if (raw.includes('transcription')) return ['transcription'];
+  if (raw.includes('speech')) return ['speech'];
+  if (known.includes('embeddings')) return ['embeddings'];
+  if (raw.length === 1 && known[0] === 'image') return ['image-generation'];
+  if (raw.length === 1 && known[0] === 'audio') return ['speech'];
+  if (raw.length > 0 && known.length === 0) return [];
+  return ['chat'];
+}
+
+/**
  * Converte um item do catálogo. Devolve `null` para item sem `id` (não há como
  * endereçá-lo); `parseOpenRouterModels` o descarta.
  * @param {unknown} item
@@ -57,7 +79,8 @@ export function parseOpenRouterModel(item) {
 
   const arch = isObject(item.architecture) ? item.architecture : null;
   const input = splitModalities(arch?.input_modalities, INPUT_MODALITIES);
-  const output = splitModalities(arch?.output_modalities, OUTPUT_MODALITIES);
+  const rawOutput = Array.isArray(arch?.output_modalities) ? arch.output_modalities : [];
+  const output = splitModalities(rawOutput.map((m) => OUTPUT_ALIAS[m] ?? m), OUTPUT_MODALITIES);
 
   /** @type {Record<string, unknown>} */
   const meta = {};
@@ -84,13 +107,8 @@ export function parseOpenRouterModel(item) {
     meta.modalitiesAssumed = true;
   }
 
-  // Saída só de imagem ou só de áudio vai pelas rotas próprias (/images, /audio/speech).
-  // Saída mista segue no chat.
   /** @type {Model['operations']} */
-  const operations = outputList.includes('embeddings') ? ['embeddings']
-    : outputList.length === 1 && outputList[0] === 'image' ? ['image-generation']
-    : outputList.length === 1 && outputList[0] === 'audio' ? ['speech']
-    : ['chat'];
+  const operations = operationsOf(rawOutput, outputList);
 
   /** @type {Model} */
   const model = { id, operations, input: inputList, output: outputList };
