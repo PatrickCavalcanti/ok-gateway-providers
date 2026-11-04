@@ -42,7 +42,7 @@ const capped = (v) => (v && v.length > 200 ? v.slice(0, 200) : v);
 
 /**
  * O que um corpo de erro diz sobre a falha, sem o texto cru: lê `{ error: {...} }` (OpenRouter, Anthropic, OpenAI,
- * Gemini), o evento `response.failed` e o evento `error` da Responses API. Corpo que não é JSON ou não é um erro
+ * Gemini), e os eventos `response.failed` e `error`, que voltam com o fio Responses na E4. Corpo que não é JSON ou não é um erro
  * dá `{}`. Aceita o texto da resposta ou o objeto já lido.
  * @param {unknown} body @returns {Diagnostic}
  */

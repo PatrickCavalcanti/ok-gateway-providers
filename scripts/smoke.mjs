@@ -70,6 +70,16 @@ if (process.env.GOOGLE_API_KEY) {
   console.log('pulado: google (sem GOOGLE_API_KEY)');
 }
 
+if (process.env.OPENAI_API_KEY) {
+  targets.push({
+    name: 'openai',
+    account: { id: 'smoke-openai', provider: 'openai', api: 'openai-completions', baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY, compat: { usageInStream: true, maxTokensField: 'max_completion_tokens', reasoningFormat: 'reasoning_effort', structuredOutput: 'response_format' } },
+    model: { id: 'gpt-5.4-nano', operations: ['chat'], input: ['text', 'image'], output: ['text'] },
+  });
+} else {
+  console.log('pulado: openai (sem OPENAI_API_KEY)');
+}
+
 const cases = [
   {
     name: 'texto',

@@ -51,4 +51,5 @@ test('clear solta os relógios e nada mais dispara', async () => {
 test('gerar imagem tem primeiro byte maior que o padrão', async () => {
   const { OPERATION_TIMEOUTS, DEFAULT_TIMEOUTS } = await import('../src/timeouts.js');
   assert.ok(OPERATION_TIMEOUTS['image-generation'].firstByteMs > DEFAULT_TIMEOUTS.firstByteMs);
+  assert.ok(OPERATION_TIMEOUTS['image-generation'].idleMs > DEFAULT_TIMEOUTS.idleMs);
 });

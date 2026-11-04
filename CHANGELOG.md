@@ -6,7 +6,7 @@ Versão semântica; `0.x` enquanto a API se acomoda — cada consumidor fixa a t
 
 - Operações de chamada única: `embed`, `transcribe`, `speak`, `generateImage` e `decide`.
 - Fio `google-generative-ai`, com `cachedContent`, anexos por `inlineData` e `toGeminiContents`
-  exportada. O fio `openai-responses` fica para a próxima versão.
+  exportada. O fio `openai-responses` volta quando o Igris precisar dele.
 - Chat: `toolChoice`, `stop`, `reasoning.maxTokens` e `exclude`, `isError`, `toolName`, raciocínio
   assinado e `providerData` em ida e volta. `timeouts` por pedido.
 - `Cost.cacheStoragePerMTokHour` e `Usage.cacheStorageTokenHours`. Vários campos novos em `Compat`.

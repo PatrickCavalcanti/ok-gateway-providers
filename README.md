@@ -76,7 +76,7 @@ credits.toCredits(cost.usd); // null continua null
 | `tools` | `{ name, description, parameters }[]` (JSON Schema) |
 | `toolChoice` | `'auto' \| 'none' \| 'required' \| { name }`. Exige `tools`; sem elas é `invalid_request` |
 | `responseSchema` | `{ name?, schema, strict? }` |
-| `stop` | `string[]`: textos que encerram a geração. A Responses API não tem; lá dá `unsupported` |
+| `stop` | `string[]`: textos que encerram a geração |
 | `effort` | `'none' \| 'low' \| 'medium' \| 'high' \| 'xhigh'` |
 | `reasoning` | `{ maxTokens?, exclude? }`, além do `effort`. Só o `reasoningFormat: 'reasoning_object'` do `openai-completions` aceita; nos outros é `unsupported`. `maxTokens` não vai junto com `effort` |
 | `maxTokens`, `temperature` | — |
@@ -87,7 +87,7 @@ credits.toCredits(cost.usd); // null continua null
 
 `params` é padrão e porta de escape: entra primeiro no corpo. Tudo que o pedido traz explícito
 (`toolChoice`, `stop`, `maxTokens`, `temperature`, `responseSchema`, `effort`, `reasoning`) vence,
-e objeto do corpo (`output_config`, `thinking`, `generationConfig`, `reasoning`, `text`) funde
+e objeto do corpo (`output_config`, `thinking`, `generationConfig`, `reasoning`) funde
 campo a campo com o explícito vencendo.
 
 `content` é string ou partes: `{ type: 'text', text, cache? }`,
@@ -119,7 +119,7 @@ no stream e sem marcador de cache. Ligue o que o endpoint suporta.
 | `supportsDeveloperRole`, `supportsStore`, `supportsTemperature` | bool |
 | `reasoningFormat` | `reasoning_effort` · `reasoning_object` · `anthropic_thinking` · `none` |
 | `thinkingByDefault` | bool (Anthropic) |
-| `structuredOutput` | `response_format` · `top_level_json_schema` (llama.cpp) · `output_config` (Anthropic) · `response_json_schema` (Gemini) |
+| `structuredOutput` | `response_format` · `top_level_json_schema` (llama.cpp) · `output_config` (Anthropic) · `response_json_schema` (Gemini) · `none` |
 | `usageInStream` | bool (`stream_options.include_usage`) |
 | `providerRouting` | bool: aceita o objeto `provider` do OpenRouter em `params` |
 | `cacheMarker` | `cache_control` · `prompt_cache_breakpoint` · `none` |
@@ -226,7 +226,7 @@ const bytes = new Uint8Array([0x49, 0x44, 0x33]);
 const { text, durationSeconds } = await transcriber.transcribe({ audio: bytes, mime: 'audio/mpeg', filename: 'fala.mp3', language: 'pt' });
 
 const speaker = client('tts-1', ['speech'], ['text'], ['audio'], openai);
-const { audio, contentType } = await speaker.speak({ text: 'Olá', voice: 'onyx', format: 'mp3', instructions: 'Fale devagar', speed: 1.1 });
+const { audio, contentType } = await speaker.speak({ text: 'Olá', voice: 'onyx', format: 'mp3', speed: 1.1 });
 
 const painter = client('qwen/qwen-image-3', ['image-generation'], ['text'], ['image']);
 const { images } = await painter.generateImage({ prompt: 'um gato', params: { n: 1 } });

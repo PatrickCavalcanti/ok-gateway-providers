@@ -4,7 +4,7 @@
 // HTTP, prazos e custo são do `client.js`; aqui só o formato do fio.
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
-import { applyParams, fuse, isPlainObject } from '../params.js';
+import { applyParams, fuse } from '../params.js';
 
 /** @typedef {import('../types.js').Model} Model */
 /** @typedef {import('../types.js').Part} Part */

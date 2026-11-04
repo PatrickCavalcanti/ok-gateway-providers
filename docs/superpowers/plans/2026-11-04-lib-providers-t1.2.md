@@ -2,7 +2,7 @@
 
 > **Para quem executa:** este plano roda com `superpowers:subagent-driven-development`, orquestrado pela sessão que o escreveu. As etapas usam checkbox (`- [ ]`).
 
-**Goal:** a lib ganha embeddings, STT, TTS, imagem e decisão, os fios `google-generative-ai` e `openai-responses`, o que falta no contrato de chat e fixtures reais. Sai como `v0.2.0`.
+**Goal:** a lib ganha embeddings, STT, TTS, imagem e decisão, o fio `google-generative-ai`, o que falta no contrato de chat e fixtures reais. Sai como `v0.2.0`.
 
 **Spec:** `docs/superpowers/specs/2026-11-03-lib-providers-t1.2-design.md`.
 
@@ -1128,7 +1128,7 @@ Correção de achado segue em rodadas numeradas, até aprovar.
 
 - [ ] `git switch main && git merge --no-ff feature/t1.2`.
 - [ ] `npm test`.
-- [ ] `git tag -a v0.2.0 -m "v0.2.0 — operações, fios Google e Responses"`.
+- [ ] `git tag -a v0.2.0 -m "v0.2.0 — operações e fio Google"`.
 - [ ] `git push origin main v0.2.0`.
 - [ ] Conferir: `curl -sIL -o /dev/null -w "%{http_code}\n" https://github.com/PatrickCavalcanti/ok-gateway-providers/archive/refs/tags/v0.2.0.tar.gz` responde `200`.
 

@@ -3,6 +3,7 @@
 
 /** @typedef {import('./timeouts.js').Timeouts} Timeouts */
 
+// `openai-responses` ainda não tem fio: volta com a E4. Conta com esse `api` dá `unsupported` antes do fetch.
 /** @typedef {'openai-completions'|'anthropic-messages'|'openai-responses'|'google-generative-ai'} Api */
 
 /**
