@@ -69,9 +69,7 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   }
 
   const choice = toolChoiceOf(request, ctx);
-  if (choice !== undefined) body.tool_choice = typeof choice === 'object' ? { type: 'tool', name: choice.name } : { type: TOOL_CHOICE_TYPE[choice] };
   const stop = stopOf(request, ctx);
-  if (stop) body.stop_sequences = stop;
 
   /** @type {Record<string, any>} */
   const outputConfig = {};
@@ -100,6 +98,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
       if (!PROTECTED.has(k) && v !== undefined) body[k] = v;
     }
   }
+
+  // `toolChoice` e `stop` explícitos vencem `params`.
+  if (choice !== undefined) body.tool_choice = typeof choice === 'object' ? { type: 'tool', name: choice.name } : { type: TOOL_CHOICE_TYPE[choice] };
+  if (stop) body.stop_sequences = stop;
 
   return {
     url: `${account.baseUrl.replace(/\/+$/, '')}/messages`,
@@ -179,7 +181,7 @@ function buildMessages(messages, model, compat, ctx) {
         if (!call || typeof call !== 'object') throw invalid(`${at}: tool_call malformado (esperado um objeto)`, ctx);
         if (typeof call.id !== 'string' || !call.id) throw invalid(`${at}: tool_call precisa de id`, ctx);
         if (typeof call.name !== 'string' || !call.name) throw invalid(`${at}: tool_call precisa de name`, ctx);
-        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, where, ctx) });
+        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, at, ctx) });
       });
       if (!content.length) throw invalid(`${where}: mensagem do assistente vazia (sem texto nem tool_calls)`, ctx);
       out.push({ role: 'assistant', content });

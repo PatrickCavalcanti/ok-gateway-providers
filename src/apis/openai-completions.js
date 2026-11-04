@@ -59,11 +59,7 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   }
 
   const choice = toolChoiceOf(request, ctx);
-  if (choice !== undefined) {
-    body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', function: { name: choice.name } };
-  }
   const stop = stopOf(request, ctx);
-  if (stop) body.stop = stop;
 
   if (request.responseSchema) {
     const { name, schema, strict } = request.responseSchema;
@@ -123,6 +119,12 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
       body[k] = v;
     }
   }
+
+  // `toolChoice` e `stop` explícitos vencem `params`.
+  if (choice !== undefined) {
+    body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', function: { name: choice.name } };
+  }
+  if (stop) body.stop = stop;
 
   // OpenRouter: com schema, `require_parameters` faz o roteador recusar endpoint que ignoraria
   // o response_format. Mescla no `provider` que já veio de params, sem perdê-lo.

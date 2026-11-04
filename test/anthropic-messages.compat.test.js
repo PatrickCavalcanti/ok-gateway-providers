@@ -354,3 +354,12 @@ test('parte reasoning fora do papel assistant é invalid_request (só o assistan
     assert.throws(() => build({ messages }), (e) => e.type === 'invalid_request' && e.retryOther === false);
   }
 });
+
+test('toolChoice e stop explícitos vencem params', () => {
+  const tools = [{ name: 't', parameters: { type: 'object', properties: {} } }];
+  const account = { id: 'a', provider: 'anthropic', api: 'anthropic-messages', baseUrl: 'https://x/v1' };
+  const model = { id: 'm', operations: ['chat'], input: ['text'], output: ['text'] };
+  const { body } = buildRequest({ account, model, compat: resolveCompat(account, model), apiKey: 'k',
+    request: { messages: [{ role: 'user', content: 'oi' }], tools, toolChoice: 'none', stop: ['A'], params: { tool_choice: { type: 'any' }, stop_sequences: ['B'] } } });
+  assert.deepEqual([body.tool_choice, body.stop_sequences], [{ type: 'none' }, ['A']]);
+});

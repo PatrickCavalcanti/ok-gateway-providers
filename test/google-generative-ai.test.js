@@ -837,3 +837,9 @@ test('fallback: raciocínio da Anthropic e assinatura do Gemini só voltam ao fi
   assert.deepEqual(g.generationConfig, { stopSequences: ['FIM'] });
   for (const s of ['SIG-ANTHROPIC', 'RED-ANTHROPIC', 'vou consultar', 'providerData', 'isError']) assert.equal(JSON.stringify(g).includes(s), false, `google: ${s}`);
 });
+
+test('toolChoice e stop explícitos vencem params', () => {
+  const { body } = build({ messages: [{ role: 'user', content: 'oi' }], tools: [{ name: 't', parameters: { type: 'object', properties: { a: { type: 'string' } } } }], toolChoice: 'none', stop: ['A'], params: { toolConfig: { x: 1 }, generationConfig: { stopSequences: ['B'], temperature: 0.1 } } });
+  assert.equal(body.toolConfig.functionCallingConfig.mode, 'NONE');
+  assert.deepEqual(body.generationConfig, { stopSequences: ['A'], temperature: 0.1 });
+});

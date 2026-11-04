@@ -389,3 +389,11 @@ test('parte reasoning no papel user é invalid_request: só o assistant guarda r
     (e) => e instanceof ProviderError && e.type === 'invalid_request' && e.retryOther === false,
   );
 });
+
+test('toolChoice e stop explícitos vencem params; sem eles, params passa', () => {
+  const tools = [{ name: 't', parameters: { type: 'object', properties: {} } }];
+  const a = build({ request: { tools, toolChoice: 'required', stop: ['A'], params: { tool_choice: 'none', stop: ['B'] } } }).body;
+  assert.deepEqual([a.tool_choice, a.stop], ['required', ['A']]);
+  const b = build({ request: { tools, params: { tool_choice: 'none', stop: ['B'] } } }).body;
+  assert.deepEqual([b.tool_choice, b.stop], ['none', ['B']]);
+});

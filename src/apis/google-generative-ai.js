@@ -62,14 +62,12 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   } else {
     if (system !== undefined) body.systemInstruction = { parts: [{ text: system }] };
     if (declarations) body.tools = [{ functionDeclarations: declarations }];
-    if (choice !== undefined) body.toolConfig = { functionCallingConfig: functionCallingConfig(choice) };
   }
 
   /** @type {Record<string, any>} */
   const generationConfig = {};
   if (request.temperature !== undefined && compat.supportsTemperature) generationConfig.temperature = request.temperature;
   if (request.maxTokens !== undefined) generationConfig.maxOutputTokens = request.maxTokens;
-  if (stop) generationConfig.stopSequences = stop;
   if (request.responseSchema) {
     if (compat.structuredOutput !== 'response_json_schema') {
       throw unsupported(`${ctx.provider}/${ctx.model}: este modelo/conta não suporta saída estruturada neste fio (compat.structuredOutput = ${compat.structuredOutput})`, ctx);
@@ -92,6 +90,9 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
       body[k] = v;
     }
   }
+  // `toolChoice` e `stop` explícitos vencem `params`.
+  if (choice !== undefined && request.cachedContent === undefined) body.toolConfig = { functionCallingConfig: functionCallingConfig(choice) };
+  if (stop) generationConfig.stopSequences = stop;
   if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;
 
   return { url, headers, body };
