@@ -4,18 +4,33 @@
  */
 export function mediaFormat(mime: string): string;
 /**
+ * Separa um data-url: `data:<mime>[;param]*[;base64],<dados>`. `null` quando não é data-url.
+ * `mime` vem sem parâmetros e fica `undefined` se o prefixo não o traz. Sem vírgula, `data` é vazio.
+ * @param {string} raw
+ * @returns {{ mime: string|undefined, base64: boolean, data: string } | null}
+ */
+export function parseDataUrl(raw: string): {
+    mime: string | undefined;
+    base64: boolean;
+    data: string;
+} | null;
+/**
  * Confere se o modelo aceita a parte de mídia. Texto passa direto. Lança
  * `unsupported` (retryOther true) quando `model.input` não declara a modalidade ou
  * quando o transporte não cobre a forma da parte (ex.: URL num modelo só `data-url`).
  * Parte malformada (sem dado nem URL) é `invalid_request` com `retryOther` false.
- * Serve a qualquer fio.
+ * Serve a qualquer fio. Parte `reasoning` não é mídia nem entrada: só o papel assistant a guarda, e
+ * quem a aceita a trata antes de chegar aqui; vinda numa entrada, é `invalid_request`.
  * @param {Part} part
  * @param {Pick<Model, 'id'|'input'|'transport'>} model
  * @param {{ provider?: string }} [ctx]
+ * @returns {asserts part is Exclude<Part, { type: 'reasoning' }>}
  */
 export function assertMediaSupported(part: Part, model: Pick<Model, "id" | "input" | "transport">, ctx?: {
     provider?: string;
-}): void;
+}): asserts part is Exclude<Part, {
+    type: "reasoning";
+}>;
 /** Nome para arquivo sem `name` (o Chat Completions pede `filename`). @param {string|undefined} mime */
 export function defaultFilename(mime: string | undefined): string;
 /**

@@ -3,9 +3,11 @@
 import { registerApi } from './client.js';
 import * as openaiCompletions from './apis/openai-completions.js';
 import * as anthropicMessages from './apis/anthropic-messages.js';
+import * as googleGenerativeAi from './apis/google-generative-ai.js';
 
 registerApi(openaiCompletions);
 registerApi(anthropicMessages);
+registerApi(googleGenerativeAi);
 
 export { createClient, registerApi, getApi, listApis } from './client.js';
 /** Tipos públicos (Account, Model, ChatRequest, ChatEvent, Usage, Cost…). */
@@ -16,5 +18,7 @@ export { createDeadline, DEFAULT_TIMEOUTS } from './timeouts.js';
 export { readSSE } from './sse.js';
 export { resolveCompat, DEFAULT_COMPAT } from './compat.js';
 export { computeCost, tierFor } from './cost.js';
+export { makeUsage, reportedCost } from './usage.js';
+export { toGeminiContents } from './apis/google-generative-ai.js';
 export { createCreditConverter } from './credits.js';
 export { parseOpenRouterModels } from './catalog/openrouter.js';

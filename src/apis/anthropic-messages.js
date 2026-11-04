@@ -4,6 +4,7 @@
 // HTTP, prazos e custo são do `client.js`; aqui só o formato do fio.
 
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
+import { applyParams, fuse } from '../params.js';
 
 /** @typedef {import('../types.js').Model} Model */
 /** @typedef {import('../types.js').Part} Part */
@@ -30,10 +31,18 @@ const PROTECTED = new Set(['model', 'messages', 'system', 'stream', 'tools']);
 export function buildRequest({ account, model, compat, request, apiKey }) {
   /** @type {Ctx} */
   const ctx = { provider: account.provider, model: model.id };
+  if (request.cachedContent !== undefined) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: cachedContent só existe no fio google-generative-ai`, ctx);
+  }
 
   const system = buildSystem(request.system, compat);
   if (!Array.isArray(request.messages)) throw invalid('messages precisa ser uma lista', ctx);
   const messages = buildMessages(request.messages, model, compat, ctx);
+
+  // Esta API não tem orçamento de raciocínio no pedido (o `effort` é o único controle).
+  if (request.reasoning && (request.reasoning.maxTokens !== undefined || request.reasoning.exclude !== undefined)) {
+    throw unsupported(`${ctx.provider}/${ctx.model}: reasoning.maxTokens/exclude só existem com reasoningFormat "reasoning_object" (o fio anthropic-messages usa só effort)`, ctx);
+  }
 
   const effort = request.effort;
   const adaptive = effort !== undefined && effort !== 'none';
@@ -60,44 +69,86 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     }));
   }
 
-  /** @type {Record<string, any>} */
-  const outputConfig = {};
-  if (compat.reasoningFormat === 'anthropic_thinking' && effort !== undefined) {
-    body.thinking = { type: adaptive ? 'adaptive' : 'disabled' };
-    if (adaptive) outputConfig.effort = effort;
-  }
-  if (request.responseSchema) {
-    if (compat.structuredOutput !== 'output_config') {
-      throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara saída estruturada (compat.structuredOutput = "${compat.structuredOutput}")`, ctx);
-    }
-    outputConfig.format = { type: 'json_schema', schema: request.responseSchema.schema };
-  }
-  if (Object.keys(outputConfig).length) body.output_config = outputConfig;
+  const choice = toolChoiceOf(request, ctx);
+  const stop = stopOf(request, ctx);
 
+  if (request.responseSchema && compat.structuredOutput !== 'output_config') {
+    throw unsupported(`${ctx.provider}/${ctx.model}: o modelo não declara saída estruturada (compat.structuredOutput = "${compat.structuredOutput}")`, ctx);
+  }
+
+  // params: do modelo, depois da chamada (o último vence).
+  applyParams(body, [model.params, request.params], (k) => PROTECTED.has(k));
+
+  // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo.
+  if (compat.reasoningFormat === 'anthropic_thinking' && effort !== undefined) {
+    fuse(body, 'thinking', { type: adaptive ? 'adaptive' : 'disabled' });
+    delete body.thinking.budget_tokens; // só o thinking `enabled` tem orçamento; sobra do params invalidaria o pedido
+  }
+  const outputConfig = {
+    ...(compat.reasoningFormat === 'anthropic_thinking' && adaptive ? { effort } : {}),
+    ...(request.responseSchema ? { format: { type: 'json_schema', schema: request.responseSchema.schema } } : {}),
+  };
+  if (Object.keys(outputConfig).length) fuse(body, 'output_config', outputConfig);
+  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
   // Modelo que pensa por padrão responde 400 a `temperature`, mesmo com `effort: 'none'`
   // (o Gateway nunca a manda para eles); com o adaptive ligado ela também é recusada.
-  if (request.temperature !== undefined && compat.supportsTemperature
-    && !compat.thinkingByDefault && !thinkingOn) {
+  // Um `temperature` que o próprio `params` trouxe é escolha do chamador e também é sobrescrito.
+  if (request.temperature !== undefined && ((compat.supportsTemperature && !compat.thinkingByDefault && !thinkingOn) || 'temperature' in body)) {
     body.temperature = request.temperature;
   }
-
-  for (const extra of [model.params, request.params]) {
-    if (!extra) continue;
-    for (const [k, v] of Object.entries(extra)) {
-      if (!PROTECTED.has(k) && v !== undefined) body[k] = v;
-    }
-  }
+  if (choice !== undefined) body.tool_choice = typeof choice === 'object' ? { type: 'tool', name: choice.name } : { type: TOOL_CHOICE_TYPE[choice] };
+  if (stop) body.stop_sequences = stop;
 
   return {
     url: `${account.baseUrl.replace(/\/+$/, '')}/messages`,
     headers: {
       'x-api-key': apiKey,
-      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-version': versionOf(account, compat),
       'content-type': 'application/json',
       accept: 'text/event-stream',
     },
     body,
   };
+}
+
+/**
+ * `anthropic-version` da conta ou do compat vence o padrão, sem diferença de caixa. Entre os dois vale a ordem do
+ * cliente: o compat vence a conta.
+ * @param {import('../types.js').Account} account @param {ResolvedCompat} compat
+ */
+function versionOf(account, compat) {
+  for (const layer of [compat.headers, account.headers]) {
+    for (const [k, v] of Object.entries(layer ?? {})) if (k.toLowerCase() === 'anthropic-version' && v) return v;
+  }
+  return ANTHROPIC_VERSION;
+}
+
+/** `toolChoice` textual → `tool_choice.type` da API. */
+const TOOL_CHOICE_TYPE = /** @type {const} */ ({ auto: 'auto', none: 'none', required: 'any' });
+
+/**
+ * `toolChoice` do pedido, conferido. Sem `tools` não há o que escolher: `invalid_request`, sem outro alvo.
+ * @param {ChatRequest} request @param {Ctx} ctx
+ * @returns {import('../types.js').ToolChoice | undefined}
+ */
+function toolChoiceOf(request, ctx) {
+  const choice = request.toolChoice;
+  if (choice === undefined) return undefined;
+  if (!request.tools?.length) throw invalid('toolChoice exige tools no pedido', ctx);
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (choice && typeof choice === 'object' && typeof choice.name === 'string' && choice.name) return choice;
+  throw invalid('toolChoice precisa ser "auto", "none", "required" ou { name }', ctx);
+}
+
+/**
+ * `stop` do pedido, conferido. Lista vazia é o mesmo que não pedir.
+ * @param {ChatRequest} request @param {Ctx} ctx @returns {string[] | undefined}
+ */
+function stopOf(request, ctx) {
+  const stop = request.stop;
+  if (stop === undefined) return undefined;
+  if (!Array.isArray(stop) || stop.some((s) => typeof s !== 'string')) throw invalid('stop precisa ser uma lista de textos', ctx);
+  return stop.length ? stop : undefined;
 }
 
 /** @param {CacheMark|undefined} cache @param {ResolvedCompat} compat @returns {Block} */
@@ -127,8 +178,10 @@ function buildMessages(messages, model, compat, ctx) {
     const where = `messages[${i}]`;
     if (!msg || typeof msg !== 'object') throw invalid(`${where}: mensagem malformada (esperado um objeto)`, ctx);
     if (msg.role === 'assistant') {
+      // O raciocínio assinado precisa ir antes do texto e das tool calls, onde quer que a parte esteja na lista.
+      const blocks = partsToBlocks(msg.content, model, compat, ctx, where, false);
       /** @type {Block[]} */
-      const content = partsToBlocks(msg.content, model, compat, ctx, where, false);
+      const content = [...blocks.filter(isThinking), ...blocks.filter((b) => !isThinking(b))];
       const calls = msg.toolCalls ?? [];
       if (!Array.isArray(calls)) throw invalid(`${where}: toolCalls precisa ser uma lista`, ctx);
       calls.forEach((call, k) => {
@@ -136,7 +189,7 @@ function buildMessages(messages, model, compat, ctx) {
         if (!call || typeof call !== 'object') throw invalid(`${at}: tool_call malformado (esperado um objeto)`, ctx);
         if (typeof call.id !== 'string' || !call.id) throw invalid(`${at}: tool_call precisa de id`, ctx);
         if (typeof call.name !== 'string' || !call.name) throw invalid(`${at}: tool_call precisa de name`, ctx);
-        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, where, ctx) });
+        content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArguments(call, at, ctx) });
       });
       if (!content.length) throw invalid(`${where}: mensagem do assistente vazia (sem texto nem tool_calls)`, ctx);
       out.push({ role: 'assistant', content });
@@ -150,6 +203,7 @@ function buildMessages(messages, model, compat, ctx) {
         type: 'tool_result',
         tool_use_id: msg.toolCallId,
         content: toolResultContent(msg.content, model, compat, ctx, where),
+        ...(msg.isError === true ? { is_error: true } : {}),
         // A API aceita `cache_control` no próprio bloco tool_result; a marca da parte vem para cá.
         ...cacheField(toolResultCache(msg.content), compat),
       }];
@@ -173,6 +227,9 @@ function buildMessages(messages, model, compat, ctx) {
   });
   return out;
 }
+
+/** @param {Block} block */
+const isThinking = (block) => block.type === 'thinking' || block.type === 'redacted_thinking';
 
 /** @param {{ id: string, name: string, arguments: string }} call @param {string} where @param {Ctx} ctx */
 function parseArguments(call, where, ctx) {
@@ -223,12 +280,20 @@ function partsToBlocks(content, model, compat, ctx, where, allowMedia) {
       case 'text':
         if (part.text) out.push({ type: 'text', text: part.text, ...cacheField(part.cache, compat) });
         return;
+      case 'reasoning':
+        // `allowMedia: false` é o papel assistant, o único que guarda raciocínio.
+        if (allowMedia) throw invalid(`${at}: parte reasoning só existe no papel assistant`, ctx);
+        // Sem assinatura (ou sem o bloco redigido) a API recusaria o bloco: a parte é ignorada. É o que
+        // acontece com o raciocínio que veio de outro provedor, que não traz assinatura da Anthropic.
+        if (part.redacted) out.push({ type: 'redacted_thinking', data: part.redacted });
+        else if (part.signature) out.push({ type: 'thinking', thinking: part.text ?? '', signature: part.signature });
+        return;
       case 'audio':
       case 'video':
         throw unsupported(`${ctx.provider}/${ctx.model}: ${at}: a Messages API da Anthropic não aceita ${part.type === 'audio' ? 'áudio' : 'vídeo'}`, ctx);
       case 'image':
         if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar imagem`, ctx);
-        out.push(imageBlock(part, model, ctx, at));
+        out.push({ ...imageBlock(part, model, ctx, at), ...cacheField(part.cache, compat) });
         return;
       case 'file':
         if (!allowMedia) throw invalid(`${at}: o assistente não pode enviar arquivo`, ctx);
@@ -401,6 +466,8 @@ export async function* parseStream(sseEvents, { account, model }) {
         blocks.set(ev.index, { kind, id: b.id, name: b.name, json: '', initial: b.input });
         if (kind === 'text' && b.text) yield { type: 'text', text: b.text };
         else if (kind === 'thinking' && b.thinking) yield { type: 'reasoning', text: b.thinking };
+        // Bloco que a API cifrou: sem texto, e precisa voltar como veio. O `data` é opaco.
+        else if (kind === 'redacted_thinking' && b.data) yield { type: 'reasoning', text: '', redacted: b.data };
         break;
       }
       case 'content_block_delta': {
@@ -408,8 +475,10 @@ export async function* parseStream(sseEvents, { account, model }) {
         const blk = blocks.get(ev.index);
         if (d.type === 'text_delta' && d.text) yield { type: 'text', text: d.text };
         else if (d.type === 'thinking_delta' && d.thinking) yield { type: 'reasoning', text: d.thinking };
+        // A assinatura fecha o bloco `thinking`: o chamador a junta ao texto que já recebeu e a devolve na parte reasoning.
+        else if (d.type === 'signature_delta' && d.signature) yield { type: 'reasoning', text: '', signature: d.signature };
         else if (d.type === 'input_json_delta' && blk) blk.json += d.partial_json ?? '';
-        // signature_delta e outros: não viram evento.
+        // outros deltas: não viram evento.
         break;
       }
       case 'content_block_stop': {

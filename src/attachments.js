@@ -26,6 +26,33 @@ export function mediaFormat(mime) {
   return alias[subtype] ?? subtype;
 }
 
+/**
+ * Separa um data-url: `data:<mime>[;param]*[;base64],<dados>`. `null` quando não é data-url.
+ * `mime` vem sem parâmetros e fica `undefined` se o prefixo não o traz. Sem vírgula, `data` é vazio.
+ * @param {string} raw
+ * @returns {{ mime: string|undefined, base64: boolean, data: string } | null}
+ */
+export function parseDataUrl(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith('data:')) return null;
+  const comma = raw.indexOf(',');
+  if (comma === -1) return { mime: undefined, base64: false, data: '' };
+  const header = raw.slice(5, comma).split(';').map((h) => h.trim());
+  return { mime: header[0] || undefined, base64: header.includes('base64'), data: raw.slice(comma + 1) };
+}
+
+/**
+ * Dado de áudio/vídeo: vazio nunca vale, e data-url precisa ser base64 quando o transporte o decodifica
+ * (percent-encoding seria enviado como se fosse base64). `video_url` leva o data-url como está.
+ * @param {string} data @param {string} what @param {{ provider?: string }} ctx @param {Model} m @param {boolean} [needBase64]
+ */
+function assertDataUrl(data, what, ctx, m, needBase64 = true) {
+  if (!data) throw invalid(ctx, m, `parte de ${what} sem dados`);
+  const url = parseDataUrl(data);
+  if (!url) return;
+  if (!url.data) throw invalid(ctx, m, `data-url de ${what} sem dados`);
+  if (needBase64 && !url.base64) throw invalid(ctx, m, `data-url de ${what} precisa ser base64 (;base64)`);
+}
+
 /** @param {{ provider?: string }} ctx @param {Model} model @param {string} message */
 function invalid(ctx, model, message) {
   return new ProviderError({
@@ -39,14 +66,17 @@ function invalid(ctx, model, message) {
  * `unsupported` (retryOther true) quando `model.input` não declara a modalidade ou
  * quando o transporte não cobre a forma da parte (ex.: URL num modelo só `data-url`).
  * Parte malformada (sem dado nem URL) é `invalid_request` com `retryOther` false.
- * Serve a qualquer fio.
+ * Serve a qualquer fio. Parte `reasoning` não é mídia nem entrada: só o papel assistant a guarda, e
+ * quem a aceita a trata antes de chegar aqui; vinda numa entrada, é `invalid_request`.
  * @param {Part} part
  * @param {Pick<Model, 'id'|'input'|'transport'>} model
  * @param {{ provider?: string }} [ctx]
+ * @returns {asserts part is Exclude<Part, { type: 'reasoning' }>}
  */
 export function assertMediaSupported(part, model, ctx = {}) {
   if (part.type === 'text') return;
   const m = /** @type {Model} */ (model);
+  if (part.type === 'reasoning') throw invalid(ctx, m, 'parte reasoning só existe no papel assistant');
   const where = `${ctx.provider ?? 'provider'}/${model.id}`;
   const fail = (/** @type {string} */ msg) => unsupported(`${where}: ${msg}`, { provider: ctx.provider, model: model.id });
 
@@ -82,20 +112,23 @@ export function assertMediaSupported(part, model, ctx = {}) {
   if (part.type === 'audio') {
     // Sem declaração, o único transporte conhecido é `input_audio`; `null` desliga.
     const t = transport.audio === undefined ? 'input_audio' : transport.audio;
-    if (t !== 'input_audio') throw fail('o modelo não aceita áudio no transporte declarado (transport.audio)');
-    if (!part.data || !part.format) throw invalid(ctx, m, 'parte de áudio precisa de data (base64) e format');
+    if (t !== 'input_audio' && t !== 'inline_data') throw fail('o modelo não aceita áudio no transporte declarado (transport.audio)');
+    // Em data-url o mime já vem no prefixo, como em imagem e arquivo.
+    if (!part.data || (!part.format && !parseDataUrl(part.data)?.mime)) throw invalid(ctx, m, 'parte de áudio precisa de data (base64) e format');
+    assertDataUrl(part.data, 'áudio', ctx, m);
     return;
   }
 
   // vídeo: não há transporte padrão — o dono do modelo precisa declarar.
   const t = transport.video;
-  if (t !== 'input_video' && t !== 'video_url') {
-    throw fail('o modelo não declara transport.video (input_video ou video_url); vídeo não é enviado sem isso');
+  if (t !== 'input_video' && t !== 'video_url' && t !== 'inline_data') {
+    throw fail('o modelo não declara transport.video (input_video, video_url ou inline_data); vídeo não é enviado sem isso');
   }
   if (part.data === undefined && part.url === undefined) throw invalid(ctx, m, 'parte de vídeo sem data nem url');
-  if (t === 'input_video') {
-    if (part.data === undefined) throw fail('transporte input_video só aceita vídeo em base64 (data), não URL');
-    if (!part.mime) throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
+  if (part.data !== undefined) assertDataUrl(part.data, 'vídeo', ctx, m, t !== 'video_url');
+  if (t === 'input_video' || t === 'inline_data') {
+    if (part.data === undefined) throw fail(`transporte ${t} só aceita vídeo em base64 (data), não URL`);
+    if (!part.mime && !parseDataUrl(part.data)?.mime) throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
   } else if (part.data !== undefined && !part.data.startsWith('data:') && !part.mime) {
     throw invalid(ctx, m, 'vídeo em base64 precisa de mime');
   }
@@ -164,11 +197,15 @@ export function toOpenAIContent(content, { model, compat, provider }) {
       return { type: 'file', file: { filename: part.name ?? defaultFilename(mime), file_data: fileData } };
     }
     if (part.type === 'audio') {
-      return { type: 'input_audio', input_audio: { data: part.data, format: part.format } };
+      // `input_audio.data` é base64 puro: o data-url perde o prefixo, que fornece o format se faltar.
+      const url = parseDataUrl(part.data);
+      const format = part.format ?? mediaFormat(/** @type {string} */ (url?.mime));
+      return { type: 'input_audio', input_audio: { data: url ? url.data : part.data, format } };
     }
     // vídeo (assertMediaSupported garantiu transport.video e a forma da parte)
     if (model.transport?.video === 'input_video') {
-      return { type: 'input_video', input_video: { data: part.data, format: mediaFormat(/** @type {string} */ (part.mime)) } };
+      const url = parseDataUrl(/** @type {string} */ (part.data));
+      return { type: 'input_video', input_video: { data: url ? url.data : part.data, format: mediaFormat(/** @type {string} */ (part.mime ?? url?.mime)) } };
     }
     const url = part.url !== undefined ? part.url : asDataUrl(/** @type {string} */ (part.data), part.mime);
     return { type: 'video_url', video_url: { url } };

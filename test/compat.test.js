@@ -39,3 +39,12 @@ test('undefined não apaga o padrão e o padrão não é mutado', () => {
   c.headers.x = '1';
   assert.deepEqual(DEFAULT_COMPAT['openai-completions'].headers, {});
 });
+
+test('padrões das operações na base', () => {
+  const c = resolveCompat({ api: 'openai-completions' });
+  assert.equal(c.sttResponseFormat, 'json');
+  assert.equal(c.ttsDefaultVoice, null);
+  assert.equal(c.imagePath, '/images/generations');
+  assert.equal(c.imageResponseFormat, 'b64_json');
+  assert.equal(c.decisionPath, null);
+});

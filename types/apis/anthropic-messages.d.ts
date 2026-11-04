@@ -13,6 +13,7 @@ export function parseStream(events: AsyncIterable<import("../sse.js").SSEEvent>,
     account: import("../types.js").Account;
     model: import("../types.js").Model;
     compat: import("../types.js").ResolvedCompat;
+    headers: Headers;
 }): AsyncGenerator<Exclude<import("../types.js").ChatEvent, {
     type: "end";
 }>, import("../types.js").StreamSummary, undefined>;

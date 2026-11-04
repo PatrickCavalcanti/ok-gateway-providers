@@ -168,3 +168,46 @@ test('catálogo declara o transporte de vídeo e áudio do OpenRouter', () => {
   const [t] = parseOpenRouterModels({ data: [{ id: 'g/t', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, pricing: { prompt: '0', completion: '0' } }] });
   assert.equal(t.transport, undefined);
 });
+
+test('operação por modalidade de saída: embeddings vira embeddings', () => {
+  const m = parseOpenRouterModel({ id: 't/emb', architecture: { input_modalities: ['text'], output_modalities: ['embeddings'] } });
+  assert.deepEqual(m?.operations, ['embeddings']);
+});
+
+test('operação por modalidade de saída: só image vira image-generation', () => {
+  const m = parseOpenRouterModel({ id: 't/img', architecture: { input_modalities: ['text'], output_modalities: ['image'] } });
+  assert.deepEqual(m?.operations, ['image-generation']);
+});
+
+test('operação por modalidade de saída: só audio vira speech', () => {
+  const m = parseOpenRouterModel({ id: 't/aud', architecture: { input_modalities: ['text'], output_modalities: ['audio'] } });
+  assert.deepEqual(m?.operations, ['speech']);
+});
+
+test('operação por modalidade de saída: text+image segue chat', () => {
+  const m = parseOpenRouterModel({ id: 't/chat-img', architecture: { input_modalities: ['text'], output_modalities: ['text', 'image'] } });
+  assert.deepEqual(m?.operations, ['chat']);
+});
+
+test('operação por modalidade de saída: só text segue chat', () => {
+  const m = parseOpenRouterModel({ id: 't/chat-txt', architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
+  assert.deepEqual(m?.operations, ['chat']);
+});
+
+test('catálogo completo: saída nomeada pela operação', () => {
+  const of = (input_modalities, output_modalities) => parseOpenRouterModel({ id: 'x/y', architecture: { input_modalities, output_modalities } });
+  const tts = of(['text'], ['speech']);
+  assert.deepEqual([tts.operations, tts.output], [['speech'], ['audio']]);
+  const stt = of(['audio'], ['transcription']);
+  assert.deepEqual([stt.operations, stt.input, stt.output], [['transcription'], ['audio'], ['text']]);
+  const jev = of(['text', 'image'], ['decisions']);
+  assert.deepEqual([jev.operations, jev.output], [['decision'], ['text']]);
+});
+
+test('saída fora do vocabulário não vira chat', () => {
+  const video = parseOpenRouterModel({ id: 'x/v', architecture: { input_modalities: ['text'], output_modalities: ['video'] } });
+  assert.deepEqual(video.operations, []);
+  assert.deepEqual(video.meta.unknownModalities, { output: ['video'] });
+  const rerank = parseOpenRouterModel({ id: 'x/r', architecture: { input_modalities: ['text'], output_modalities: ['rerank'] } });
+  assert.deepEqual(rerank.operations, []);
+});

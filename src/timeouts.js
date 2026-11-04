@@ -6,6 +6,13 @@
 export const DEFAULT_TIMEOUTS = Object.freeze({ firstByteMs: 60_000, idleMs: 60_000, totalMs: 0 });
 
 /** @typedef {{ firstByteMs?: number, idleMs?: number, totalMs?: number }} Timeouts */
+
+/**
+ * Padrão por operação, abaixo do da conta e do pedido. Gerar imagem responde só no fim: medido
+ * em 51 s e além de 60 s no OpenRouter (2026-11-04).
+ * @type {Readonly<Record<string, Timeouts>>}
+ */
+export const OPERATION_TIMEOUTS = Object.freeze({ 'image-generation': Object.freeze({ firstByteMs: 180_000, idleMs: 180_000 }) });
 /** @typedef {null|'aborted'|'first_byte'|'idle'|'total'} DeadlineReason */
 
 /**

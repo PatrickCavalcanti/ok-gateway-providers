@@ -1,2 +1,4 @@
 # Os testes cortam fixture por dois fins de linha LF; autocrlf no Windows os quebraria.
 test/fixtures/** text eol=lf
+# Resposta binária (áudio, imagem) gravada pelo gravador. A última regra que casa vence.
+test/fixtures/**/*.bin binary

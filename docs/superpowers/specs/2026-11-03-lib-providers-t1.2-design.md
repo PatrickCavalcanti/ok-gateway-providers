@@ -1,7 +1,7 @@
 # `ok-gateway-providers` — T1.2: as outras operações e os fios que faltam
 
 **Data:** 2026-11-03
-**Status:** escrita para revisão do dono.
+**Status:** aprovada e entregue em `v0.2.0`, **sem a §7**. O fio `openai-responses` volta com a E4 (ajuste 10 do plano; código em `feature/openai-responses`).
 **Base:** `v0.1.0` (T1.1). Visão: `docs/superpowers/specs/2026-10-30-providers-lib-e-gateway-visao-design.md`, decisões D1–D13.
 **Quem usa:** o Igris Gateway na T2.2, trocando os 6 adapters pela lib. O Igris na E4.
 **Versão de saída:** `v0.2.0`.
@@ -12,7 +12,7 @@ Hoje a lib só faz `chat`, em dois fios, e só entende resposta SSE. A T1.2 entr
 
 - as operações `embeddings`, `transcription`, `speech`, `image-generation` e `decision`;
 - o fio `google-generative-ai`, com a referência `cachedContent`;
-- o fio `openai-responses`;
+- o fio `openai-responses` (**saiu desta entrega**: ver o status);
 - três lacunas do contrato de chat: `tool_choice`, `is_error` no resultado de tool e a ida e volta do raciocínio assinado;
 - fixtures gravadas de provedores reais.
 
@@ -122,7 +122,7 @@ Tem por base o adapter do Gateway, que já roda em produção, e corrige o que e
   - O mesmo vale para `thoughtSignature` do Gemini em tool call, levado como dado opaco em `toolCalls[].providerData`.
   - **A verificar no smoke:** um ciclo completo de tool, com pensamento ligado, na Anthropic e no Gemini. É o que prova se isso é necessário nos modelos atuais.
 
-## 7. Fio `openai-responses`
+## 7. Fio `openai-responses` (fora da `v0.2.0`)
 
 **Só o Igris usa, na E4.** Por isso é a última fase: a T2.2 não depende dele.
 
@@ -155,6 +155,8 @@ Tem por base o adapter do Gateway, que já roda em produção, e corrige o que e
 | Groq | STT |
 | TypeSafe | decisão |
 
+**O que não rodou de verdade:** todo o Google, porque a conta está sem crédito (402). Precisa rodar antes de a T2.2 trocar esse adapter.
+
 ## 9. Ordem de execução
 
 | Fase | Conteúdo | Destrava |
@@ -165,7 +167,7 @@ Tem por base o adapter do Gateway, que já roda em produção, e corrige o que e
 | 4 | Contrato de chat (§6) | T2.2 e API nova do Gateway |
 | 5 | Fio `openai-responses` | E4 |
 
-Tag `v0.2.0` ao fim das cinco. Se a T2.2 quiser começar antes da fase 5, sai uma `v0.2.0-rc` depois da fase 4.
+Tag `v0.2.0` ao fim das quatro primeiras: a fase 5 foi adiada para a E4. Se a T2.2 quiser começar antes da fase 5, sai uma `v0.2.0-rc` depois da fase 4.
 
 ## 10. Fora desta entrega
 
@@ -178,6 +180,8 @@ Tag `v0.2.0` ao fim das cinco. Se a T2.2 quiser começar antes da fase 5, sai um
 | Upload por Files API, publicação no npm | Sem data |
 
 ## 11. Critério de pronto
+
+Estado na entrega: as fixtures reais cobrem cada operação e os casos principais de chat em OpenRouter e Anthropic, não no Gemini. O smoke vale com a exceção do Google. O ciclo de tool com pensamento rodou só na Anthropic.
 
 - [ ] `npm test` e `npm run typecheck` verdes, offline.
 - [ ] `types/` regenerado.

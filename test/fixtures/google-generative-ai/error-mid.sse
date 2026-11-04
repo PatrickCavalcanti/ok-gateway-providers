@@ -1,0 +1,4 @@
+data: {"candidates": [{"content": {"parts": [{"text": "Começando a respos"}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 8,"totalTokenCount": 8},"modelVersion": "gemini-3.5-flash","responseId": "e7aWadvvM4CIjrEPoNHL6Qg"}
+
+data: {"error": {"code": 503,"message": "The model is overloaded. Please try again later.","status": "UNAVAILABLE"}}
+

@@ -249,3 +249,160 @@ test('mídia em assistant/tool dá unsupported (mídia só vai em user)', () => 
     );
   }
 });
+
+test('cachedContent é do Gemini: aqui dá unsupported, antes do fetch', () => {
+  assert.throws(
+    () => build({ request: { cachedContent: 'cachedContents/abc' } }),
+    (e) => e instanceof ProviderError && e.type === 'unsupported' && e.retryOther === true,
+  );
+});
+
+// ---------------------------------------------------------------------------------------
+// T1.2 · Fase 4 · Task 4.1 — toolChoice, stop, reasoning e isError
+
+const tools = [{ name: 'soma', parameters: { type: 'object' } }];
+
+test('toolChoice: auto · none · required · { name } viram tool_choice do fio', () => {
+  const choice = (toolChoice) => build({ request: { tools, toolChoice } }).body.tool_choice;
+  assert.equal(choice('auto'), 'auto');
+  assert.equal(choice('none'), 'none');
+  assert.equal(choice('required'), 'required');
+  assert.deepEqual(choice({ name: 'soma' }), { type: 'function', function: { name: 'soma' } });
+  assert.equal('tool_choice' in build({ request: { tools } }).body, false); // sem pedido, nada sai
+});
+
+test('toolChoice sem tools, ou com valor que não existe, é invalid_request sem outro alvo', () => {
+  const invalid = (e) => e instanceof ProviderError && e.type === 'invalid_request' && e.retryOther === false;
+  for (const toolChoice of ['auto', 'none', 'required', { name: 'soma' }]) {
+    assert.throws(() => build({ request: { toolChoice } }), invalid, `sem tools: ${JSON.stringify(toolChoice)}`);
+    assert.throws(() => build({ request: { tools: [], toolChoice } }), invalid, `tools vazio: ${JSON.stringify(toolChoice)}`);
+  }
+  for (const toolChoice of ['sempre', {}, { name: '' }, { name: 3 }, null, 7]) {
+    assert.throws(() => build({ request: { tools, toolChoice } }), invalid, `valor: ${JSON.stringify(toolChoice)}`);
+  }
+});
+
+test('stop vai como stop; lista vazia não vai; valor fora de lista de textos é invalid_request', () => {
+  assert.deepEqual(build({ request: { stop: ['FIM', '\n\n'] } }).body.stop, ['FIM', '\n\n']);
+  assert.equal('stop' in build({ request: { stop: [] } }).body, false);
+  assert.equal('stop' in build().body, false);
+  for (const stop of ['FIM', [1], [null], {}]) {
+    assert.throws(
+      () => build({ request: { stop } }),
+      (e) => e instanceof ProviderError && e.type === 'invalid_request' && e.retryOther === false,
+      JSON.stringify(stop),
+    );
+  }
+});
+
+test('reasoning.maxTokens e exclude: só no formato reasoning_object; effort e maxTokens não vão juntos', () => {
+  const account = { compat: { reasoningFormat: 'reasoning_object' } };
+  assert.throws(() => build({ account, request: { effort: 'high', reasoning: { maxTokens: 2000 } } }), (e) => e.type === 'invalid_request' && e.retryOther === false);
+  assert.deepEqual(build({ account, request: { effort: 'low', reasoning: { exclude: true } } }).body.reasoning, { effort: 'low', exclude: true });
+  assert.deepEqual(build({ account, request: { reasoning: { maxTokens: 800 } } }).body.reasoning, { max_tokens: 800 }); // sem effort
+  assert.deepEqual(build({ account, request: { reasoning: { exclude: false } } }).body.reasoning, { exclude: false });
+  assert.equal('reasoning' in build({ account, request: { reasoning: {} } }).body, false); // objeto vazio não pede nada
+  assert.deepEqual(build({ account, request: { effort: 'high' } }).body.reasoning, { effort: 'high' }); // o caminho antigo segue
+  for (const reasoningFormat of ['reasoning_effort', 'none', 'anthropic_thinking']) {
+    for (const reasoning of [{ maxTokens: 100 }, { exclude: true }]) {
+      assert.throws(
+        () => build({ account: { compat: { reasoningFormat } }, request: { effort: 'high', reasoning } }),
+        (e) => e instanceof ProviderError && e.type === 'unsupported' && e.retryOther === true,
+        `${reasoningFormat} ${JSON.stringify(reasoning)}`,
+      );
+    }
+  }
+  // reasoning vazio nos outros formatos não pede nada: não falha
+  assert.equal('reasoning_effort' in build({ account: { compat: { reasoningFormat: 'reasoning_effort' } }, request: { reasoning: {} } }).body, false);
+});
+
+test('isError no papel tool: prefixo "Tool error: " no texto; sem a marca, nada muda', () => {
+  const call = { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'soma', arguments: '{}' }] };
+  const result = (extra, content = 'falhou') => build({ request: { tools, messages: [call, { role: 'tool', toolCallId: 'c1', content, ...extra }] } }).body.messages[1];
+  assert.deepEqual(result({ isError: true }), { role: 'tool', tool_call_id: 'c1', content: 'Tool error: falhou' });
+  assert.equal(result({ isError: false }).content, 'falhou');
+  assert.equal(result({}).content, 'falhou');
+  // partes de texto sem marca juntam-se; o prefixo vai uma vez só
+  assert.equal(result({ isError: true }, [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }]).content, 'Tool error: ab');
+  // com marca de cache aceita pelo compat o conteúdo segue em lista: o prefixo vai na primeira parte e a marca fica
+  const comMarca = build({
+    account: { compat: { cacheMarker: 'cache_control' } },
+    request: { tools, messages: [call, { role: 'tool', toolCallId: 'c1', isError: true, content: [{ type: 'text', text: 'x', cache: {} }, { type: 'text', text: 'y' }] }] },
+  }).body.messages[1];
+  assert.deepEqual(comMarca.content, [{ type: 'text', text: 'Tool error: x', cache_control: { type: 'ephemeral' } }, { type: 'text', text: 'y' }]);
+  // sem cacheMarker a marca se perde e o conteúdo é string, com o prefixo
+  assert.equal(result({ isError: true }, [{ type: 'text', text: 'x', cache: {} }, { type: 'text', text: 'y' }]).content, 'Tool error: xy');
+  // resultado vazio com erro ainda diz que foi erro
+  assert.equal(result({ isError: true }, '').content, 'Tool error: ');
+  // isError fora do papel tool não faz nada
+  assert.deepEqual(build({ request: { messages: [{ role: 'user', content: 'oi', isError: true }] } }).body.messages[0], { role: 'user', content: 'oi' });
+});
+
+// ---------------------------------------------------------------------------------------
+// T1.2 · Fase 4 · Task 4.2 — raciocínio assinado: aqui a parte reasoning é ignorada de propósito
+
+test('parte reasoning no papel assistant é ignorada: sem erro e fora do corpo, para o fallback entre modelos', () => {
+  const { body } = build({
+    request: {
+      tools,
+      messages: [
+        { role: 'user', content: 'quanto é 1+1?' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', text: 'preciso somar', signature: 'SIG-ANTHROPIC' },
+            { type: 'text', text: 'vou ' },
+            { type: 'reasoning', text: '', redacted: 'RED-ANTHROPIC' },
+            { type: 'text', text: 'calcular' },
+          ],
+          toolCalls: [{ id: 'c1', name: 'soma', arguments: '{"a":1,"b":1}', providerData: { thoughtSignature: 'SIG-GEMINI' } }],
+        },
+        { role: 'tool', toolCallId: 'c1', content: '2' },
+      ],
+    },
+  });
+  assert.deepEqual(body.messages[1], {
+    role: 'assistant', content: 'vou calcular',
+    tool_calls: [{ id: 'c1', type: 'function', function: { name: 'soma', arguments: '{"a":1,"b":1}' } }],
+  });
+  const json = JSON.stringify(body);
+  for (const vazou of ['SIG-ANTHROPIC', 'RED-ANTHROPIC', 'SIG-GEMINI', 'preciso somar', 'thoughtSignature', 'providerData', '"reasoning"']) {
+    assert.equal(json.includes(vazou), false, vazou);
+  }
+});
+
+test('assistant só com parte reasoning vira texto vazio, como um assistant sem texto', () => {
+  const { body } = build({ request: { messages: [{ role: 'assistant', content: [{ type: 'reasoning', text: 'x', signature: 's' }], toolCalls: [{ id: 'c1', name: 'f', arguments: '{}' }] }] } });
+  assert.deepEqual(body.messages[0], { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'f', arguments: '{}' } }] });
+});
+
+test('com reasoningFormat e cacheMarker ligados, a parte reasoning do assistant continua fora do corpo', () => {
+  const account = { compat: { reasoningFormat: 'reasoning_object', cacheMarker: 'cache_control' } };
+  const { body } = build({ account, request: { messages: [{ role: 'assistant', content: [{ type: 'reasoning', text: 'x', signature: 's', cache: {} }, { type: 'text', text: 'ok', cache: {} }] }] } });
+  assert.deepEqual(body.messages[0], { role: 'assistant', content: 'ok' });
+});
+
+test('parte reasoning no papel user é invalid_request: só o assistant guarda raciocínio', () => {
+  const part = { type: 'reasoning', text: 'x', signature: 's' };
+  assert.throws(
+    () => build({ request: { messages: [{ role: 'user', content: [part, { type: 'text', text: 'oi' }] }] } }),
+    (e) => e instanceof ProviderError && e.type === 'invalid_request' && e.retryOther === false,
+  );
+});
+
+test('toolChoice e stop explícitos vencem params; sem eles, params passa', () => {
+  const tools = [{ name: 't', parameters: { type: 'object', properties: {} } }];
+  const a = build({ request: { tools, toolChoice: 'required', stop: ['A'], params: { tool_choice: 'none', stop: ['B'] } } }).body;
+  assert.deepEqual([a.tool_choice, a.stop], ['required', ['A']]);
+  const b = build({ request: { tools, params: { tool_choice: 'none', stop: ['B'] } } }).body;
+  assert.deepEqual([b.tool_choice, b.stop], ['none', ['B']]);
+});
+
+test('maxTokens e temperature explícitos vencem params do modelo e do pedido', () => {
+  const b = build({ model: { params: { max_tokens: 1, temperature: 0.1 } }, request: { maxTokens: 50, temperature: 0.7 } }).body;
+  assert.deepEqual([b.max_tokens, b.temperature], [50, 0.7]);
+  const c = build({ model: { params: { max_tokens: 1, temperature: 0.1 } } }).body;
+  assert.deepEqual([c.max_tokens, c.temperature], [1, 0.1]);
+  const d = build({ model: { params: { temperature: 0.1 }, compat: { supportsTemperature: false } }, request: { temperature: 0.7 } }).body;
+  assert.equal(d.temperature, 0.1); // sem suporte, o explícito não entra; params é escolha de quem cadastrou
+});

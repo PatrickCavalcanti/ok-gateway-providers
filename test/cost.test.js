@@ -199,3 +199,10 @@ test('uso não declarado não vira US$ 0 (C1)', () => {
   // o custo do provedor ainda vence
   assert.deepEqual(computeCost({ cost: { input: 1, output: 2 } }, { missing: true }, 0.01), { usd: 0.01, source: 'provider' });
 });
+
+test('armazenamento de cache soma fora das faixas, só na tabela', () => {
+  const cost = { input: 1, output: 1, cacheStoragePerMTokHour: 2, tiers: [{ aboveInputTokens: 0, input: 10, output: 10 }] };
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cacheStorageTokenHours: 1_000_000 };
+  assert.deepEqual(computeCost({ cost }, usage), { usd: 2, source: 'table' });
+  assert.deepEqual(computeCost({ cost }, usage, 0.5), { usd: 0.5, source: 'provider' });
+});

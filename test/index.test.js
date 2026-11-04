@@ -3,15 +3,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as lib from '../src/index.js';
 
-test('index registra os dois fios do núcleo', () => {
-  assert.deepEqual(lib.listApis().sort(), ['anthropic-messages', 'openai-completions']);
+test('index registra os fios do núcleo', () => {
+  assert.deepEqual(lib.listApis().sort(), ['anthropic-messages', 'google-generative-ai', 'openai-completions']);
 });
 
 test('exports públicos da spec existem', () => {
   for (const name of [
     'createClient', 'ProviderError', 'computeCost', 'createCreditConverter', 'parseOpenRouterModels',
     'resolveCompat', 'readSSE', 'createDeadline', 'OPERATIONS', 'INPUT_MODALITIES', 'OUTPUT_MODALITIES',
-    'formatShape', 'parseShape', 'shapeOf', 'requestKey', 'isEligible', 'ineligibilityReason', 'METHODS_BY_OPERATION',
+    'formatShape', 'parseShape', 'shapeOf', 'requestKey', 'isEligible', 'ineligibilityReason', 'METHODS_BY_OPERATION', 'toGeminiContents',
   ]) assert.ok(name in lib, name);
 });
 

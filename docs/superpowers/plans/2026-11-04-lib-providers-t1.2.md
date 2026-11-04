@@ -2,7 +2,7 @@
 
 > **Para quem executa:** este plano roda com `superpowers:subagent-driven-development`, orquestrado pela sessão que o escreveu. As etapas usam checkbox (`- [ ]`).
 
-**Goal:** a lib ganha embeddings, STT, TTS, imagem e decisão, os fios `google-generative-ai` e `openai-responses`, o que falta no contrato de chat e fixtures reais. Sai como `v0.2.0`.
+**Goal:** a lib ganha embeddings, STT, TTS, imagem e decisão, o fio `google-generative-ai`, o que falta no contrato de chat e fixtures reais. Sai como `v0.2.0`.
 
 **Spec:** `docs/superpowers/specs/2026-11-03-lib-providers-t1.2-design.md`.
 
@@ -20,6 +20,16 @@
 2. **`isError` fora da Anthropic e do Gemini:** o texto do resultado ganha o prefixo `Tool error: `. No Gemini vai em `functionResponse.response.error`.
 3. **`openai-responses`:** a saída estruturada ganha o valor `text_format` em `compat.structuredOutput`. O padrão do fio continua conservador (`none`), e a conta oficial liga.
 4. **`reasoning.maxTokens` e `exclude`:** só existem no formato `reasoning_object`. Em qualquer outro formato, dão `unsupported`.
+
+### Ajustes durante a execução
+
+5. **Fatos medidos na API real** (2026-11-04): o OpenRouter recusa `effort` e `reasoning.max_tokens` juntos, então a lib dá `invalid_request`. A Anthropic (Sonnet 5.5) recusa `tool_choice` `any` e `tool` com pensamento ligado: a lib manda, e o erro chega com `retryOther: true`.
+6. **O que o pedido traz explícito vence `params`:** `toolChoice`, `stop`, `maxTokens`, `temperature`, `responseSchema`. Sem valor explícito, `params` passa.
+7. **`openai-responses`:** reexporta as operações do `openai-completions`, porque as rotas não mudam na OpenAI. Aceita `top_level_json_schema` para o llama.cpp. `response.refusal.delta` vira texto, e o fim sai `content_filter`. `cache_write_tokens` sai do input, como no `openai-completions`. `supportsTemperature` nasce `false`.
+8. **`toolName`** na mensagem `tool` e **resultados de tool seguidos num turno só** no Gemini.
+9. **Catálogo:** o vocabulário real de saída do OpenRouter é `speech`, `transcription`, `decisions`, `rerank`, `video`. Os três primeiros viram operação; os outros, nenhuma.
+
+10. **`openai-responses` saiu da `v0.2.0`** (revisões 1 e 2 do conjunto): o código fica em `feature/openai-responses` e volta com a E4. A Fase 5 não entra nesta tag.
 
 ---
 
@@ -1118,7 +1128,7 @@ Correção de achado segue em rodadas numeradas, até aprovar.
 
 - [ ] `git switch main && git merge --no-ff feature/t1.2`.
 - [ ] `npm test`.
-- [ ] `git tag -a v0.2.0 -m "v0.2.0 — operações, fios Google e Responses"`.
+- [ ] `git tag -a v0.2.0 -m "v0.2.0 — operações e fio Google"`.
 - [ ] `git push origin main v0.2.0`.
 - [ ] Conferir: `curl -sIL -o /dev/null -w "%{http_code}\n" https://github.com/PatrickCavalcanti/ok-gateway-providers/archive/refs/tags/v0.2.0.tar.gz` responde `200`.
 

@@ -1,0 +1,6 @@
+{
+  "model": "tts-1",
+  "input": "Teste de transcrição, um dois três.",
+  "voice": "onyx",
+  "response_format": "mp3"
+}

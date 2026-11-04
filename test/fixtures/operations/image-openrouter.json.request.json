@@ -1,0 +1,5 @@
+{
+  "n": 1,
+  "model": "qwen/qwen-image-3",
+  "prompt": "um quadrado vermelho"
+}

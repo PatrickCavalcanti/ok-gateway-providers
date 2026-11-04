@@ -18,6 +18,12 @@ const BASE = Object.freeze({
   usageInStream: false,
   providerRouting: false,
   cacheMarker: 'none',
+  sttResponseFormat: 'json',
+  ttsDefaultVoice: null,
+  ttsDefaultFormat: null,
+  imagePath: '/images/generations',
+  imageResponseFormat: 'b64_json',
+  decisionPath: null,
   headers: Object.freeze({}),
 });
 
@@ -31,6 +37,7 @@ export const DEFAULT_COMPAT = Object.freeze({
     usageInStream: true,
     cacheMarker: 'cache_control',
   }),
+  'google-generative-ai': Object.freeze({ ...BASE, structuredOutput: 'response_json_schema', usageInStream: true }),
 });
 
 /**

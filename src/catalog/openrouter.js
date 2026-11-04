@@ -5,7 +5,7 @@
 // `Model[]`. Não faz rede: quem busca é o chamador. Nada que o catálogo declara some em
 // silêncio: o que a lib não interpreta vai para `model.meta`.
 
-import { INPUT_MODALITIES, OUTPUT_MODALITIES } from '../vocabulary.js';
+import { INPUT_MODALITIES, OPERATIONS, OUTPUT_MODALITIES } from '../vocabulary.js';
 
 /** @typedef {import('../types.js').Model} Model */
 /** @typedef {import('../types.js').Cost} Cost */
@@ -45,6 +45,28 @@ function splitModalities(list, universe) {
 }
 
 /**
+ * O catálogo completo (`/models?output_modalities=all`) nomeia a saída pela operação.
+ * @type {Record<string, 'text'|'audio'>}
+ */
+const OUTPUT_ALIAS = { speech: 'audio', transcription: 'text', decisions: 'text' };
+
+/**
+ * Saída mista segue no chat. Saída que o vocabulário não conhece (vídeo, rerank) não vira
+ * operação nenhuma: dizer `chat` faria o modelo aparecer onde não funciona.
+ * @param {unknown[]} raw @param {string[]} known @returns {Model['operations']}
+ */
+function operationsOf(raw, known) {
+  if (raw.includes('decisions')) return ['decision'];
+  if (raw.includes('transcription')) return ['transcription'];
+  if (raw.includes('speech')) return ['speech'];
+  if (known.includes('embeddings')) return ['embeddings'];
+  if (raw.length === 1 && known[0] === 'image') return ['image-generation'];
+  if (raw.length === 1 && known[0] === 'audio') return ['speech'];
+  if (raw.length > 0 && known.length === 0) return [];
+  return ['chat'];
+}
+
+/**
  * Converte um item do catálogo. Devolve `null` para item sem `id` (não há como
  * endereçá-lo); `parseOpenRouterModels` o descarta.
  * @param {unknown} item
@@ -57,7 +79,8 @@ export function parseOpenRouterModel(item) {
 
   const arch = isObject(item.architecture) ? item.architecture : null;
   const input = splitModalities(arch?.input_modalities, INPUT_MODALITIES);
-  const output = splitModalities(arch?.output_modalities, OUTPUT_MODALITIES);
+  const rawOutput = Array.isArray(arch?.output_modalities) ? arch.output_modalities : [];
+  const output = splitModalities(rawOutput.map((m) => OUTPUT_ALIAS[m] ?? m), OUTPUT_MODALITIES);
 
   /** @type {Record<string, unknown>} */
   const meta = {};
@@ -84,10 +107,10 @@ export function parseOpenRouterModel(item) {
     meta.modalitiesAssumed = true;
   }
 
-  // Mesma regra do Igris (`listasDoCatalogoOpenRouter`): saída 'embeddings' → embeddings,
-  // o resto → chat. Geração de imagem do OpenRouter é chat com saída de imagem.
+  // O `/v1/models` do Gateway diz a operação do perfil em `gateway.operation`; ela vale mais que a forma.
+  const declared = isObject(item.gateway) ? item.gateway.operation : undefined;
   /** @type {Model['operations']} */
-  const operations = outputList.includes('embeddings') ? ['embeddings'] : ['chat'];
+  const operations = OPERATIONS.includes(declared) ? [declared] : operationsOf(rawOutput, outputList);
 
   /** @type {Model} */
   const model = { id, operations, input: inputList, output: outputList };

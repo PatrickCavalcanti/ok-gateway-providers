@@ -114,7 +114,7 @@ Duas regras de convivência:
   - Os identificadores da lib ficam **em inglês**, para casar com o pi-ai e o OpenRouter.
     No brainstorm eles apareceram em português (`fio`, `custo`, `podeTentarOutro`). Os
     textos do perfil no Gateway se chamam `description` e `costReference`.
-- **Fios.** `openai-completions`, `openai-responses`, `anthropic-messages` e
+- **Fios.** `openai-completions`, `openai-responses` (adiado para a E4), `anthropic-messages` e
   `google-generative-ai`. As outras operações (embeddings, STT, TTS, imagem) ficam nos
   endpoints de cada fio. `decision` entra como fio da OpenRouter e da TypeSafe.
 - **Compat declarado.** É um conjunto de campos no lugar dos cerca de 40 `if` por
@@ -238,7 +238,7 @@ Duas regras de convivência:
 | Entrega | O que entra | Spec |
 |---|---|---|
 | **T1.1 — lib, núcleo** | Vocabulário, formatos, fios `openai-completions` e `anthropic-messages`, compat, anexo, uso, custo e créditos, erros, catálogo, chave como função | [2026-10-30-lib-providers-nucleo-design.md](2026-10-30-lib-providers-nucleo-design.md) |
-| T1.2 — lib, resto | `openai-responses`, `google-generative-ai` (com `cachedContent`), embeddings, STT, TTS, imagem, decision | spec própria |
+| T1.2 — lib, resto | `google-generative-ai` (com `cachedContent`), embeddings, STT, TTS, imagem, decision | spec própria |
 | **T2.1 — Gateway, dados e API** | Coleções, cifra, linha de comando, migração do registry e dos preços, API compatível, resolução, fallback único, rotas antigas traduzidas. Roda sobre os adapters atuais até a lib chegar. | `igris-gateway/docs/superpowers/specs/2026-10-30-gateway-perfis-produtos-e-api-compativel-design.md` |
 | T2.2 — encontro | O Gateway troca os 6 adapters pela lib | spec própria |
 | E3 | O Igris fala com o Gateway como conta comum e ganha o seletor de perfis | spec própria |

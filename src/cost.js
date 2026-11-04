@@ -59,5 +59,10 @@ export function computeCost(model, usage, reportedUsd) {
   if (seconds && n(cost.audioPerSecond)) {
     usd += Math.max(seconds, n(cost.minBilledSeconds)) * /** @type {number} */ (cost.audioPerSecond);
   }
+
+  const storage = n(usage?.cacheStorageTokenHours);
+  if (storage && n(cost.cacheStoragePerMTokHour)) {
+    usd += (storage * /** @type {number} */ (cost.cacheStoragePerMTokHour)) / PER_MILLION;
+  }
   return { usd, source: 'table' };
 }
