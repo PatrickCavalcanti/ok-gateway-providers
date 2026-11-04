@@ -843,3 +843,8 @@ test('toolChoice e stop explícitos vencem params', () => {
   assert.equal(body.toolConfig.functionCallingConfig.mode, 'NONE');
   assert.deepEqual(body.generationConfig, { stopSequences: ['A'], temperature: 0.1 });
 });
+
+test('maxTokens e temperature explícitos vencem params', () => {
+  const { body } = build({ messages: [{ role: 'user', content: 'oi' }], maxTokens: 50, temperature: 0.7, params: { generationConfig: { maxOutputTokens: 1, temperature: 0.1 } } });
+  assert.deepEqual([body.generationConfig.maxOutputTokens, body.generationConfig.temperature], [50, 0.7]);
+});

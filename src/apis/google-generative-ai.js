@@ -90,7 +90,9 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
       body[k] = v;
     }
   }
-  // `toolChoice` e `stop` explícitos vencem `params`.
+  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
+  if (request.maxTokens !== undefined) generationConfig.maxOutputTokens = request.maxTokens;
+  if (request.temperature !== undefined && compat.supportsTemperature) generationConfig.temperature = request.temperature;
   if (choice !== undefined && request.cachedContent === undefined) body.toolConfig = { functionCallingConfig: functionCallingConfig(choice) };
   if (stop) generationConfig.stopSequences = stop;
   if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;

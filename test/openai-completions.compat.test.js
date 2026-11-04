@@ -397,3 +397,12 @@ test('toolChoice e stop explícitos vencem params; sem eles, params passa', () =
   const b = build({ request: { tools, params: { tool_choice: 'none', stop: ['B'] } } }).body;
   assert.deepEqual([b.tool_choice, b.stop], ['none', ['B']]);
 });
+
+test('maxTokens e temperature explícitos vencem params do modelo e do pedido', () => {
+  const b = build({ model: { params: { max_tokens: 1, temperature: 0.1 } }, request: { maxTokens: 50, temperature: 0.7 } }).body;
+  assert.deepEqual([b.max_tokens, b.temperature], [50, 0.7]);
+  const c = build({ model: { params: { max_tokens: 1, temperature: 0.1 } } }).body;
+  assert.deepEqual([c.max_tokens, c.temperature], [1, 0.1]);
+  const d = build({ model: { params: { temperature: 0.1 }, compat: { supportsTemperature: false } }, request: { temperature: 0.7 } }).body;
+  assert.equal(d.temperature, 0.1); // sem suporte, o explícito não entra; params é escolha de quem cadastrou
+});

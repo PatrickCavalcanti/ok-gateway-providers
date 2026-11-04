@@ -363,3 +363,10 @@ test('toolChoice e stop explícitos vencem params', () => {
     request: { messages: [{ role: 'user', content: 'oi' }], tools, toolChoice: 'none', stop: ['A'], params: { tool_choice: { type: 'any' }, stop_sequences: ['B'] } } });
   assert.deepEqual([body.tool_choice, body.stop_sequences], [{ type: 'none' }, ['A']]);
 });
+
+test('maxTokens e temperature explícitos vencem params', () => {
+  const account = { id: 'a', provider: 'anthropic', api: 'anthropic-messages', baseUrl: 'https://x/v1' };
+  const model = { id: 'm', operations: ['chat'], input: ['text'], output: ['text'], params: { max_tokens: 1, temperature: 0.1 } };
+  const { body } = buildRequest({ account, model, compat: resolveCompat(account, model), apiKey: 'k', request: { messages: [{ role: 'user', content: 'oi' }], maxTokens: 50, temperature: 0.7 } });
+  assert.deepEqual([body.max_tokens, body.temperature], [50, 0.7]);
+});

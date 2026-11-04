@@ -99,7 +99,9 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     }
   }
 
-  // `toolChoice` e `stop` explícitos vencem `params`.
+  // O que o pedido traz explícito vence `params`, que é padrão e porta de escape.
+  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
+  if (request.temperature !== undefined && 'temperature' in body) body.temperature = request.temperature;
   if (choice !== undefined) body.tool_choice = typeof choice === 'object' ? { type: 'tool', name: choice.name } : { type: TOOL_CHOICE_TYPE[choice] };
   if (stop) body.stop_sequences = stop;
 
