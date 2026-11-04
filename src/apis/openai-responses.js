@@ -17,6 +17,9 @@ import { makeUsage, num, reportedCost } from '../usage.js';
 
 export const api = /** @type {const} */ ('openai-responses');
 
+// Embeddings, áudio, imagem e decisão não mudam entre os dois fios da OpenAI.
+export { operations } from './openai-completions.js';
+
 /** Chaves do corpo que `params` nunca sobrescreve: o fio é dono delas. */
 const PROTECTED_KEYS = new Set(['model', 'input', 'stream', 'tools']);
 
@@ -63,7 +66,10 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
 
   const choice = toolChoiceOf(request, ctx);
 
-  if (request.responseSchema) {
+  if (request.responseSchema && compat.structuredOutput === 'top_level_json_schema') {
+    // Extensão do llama.cpp: o /v1/responses dele ignora text.format e devolve texto livre.
+    body.json_schema = request.responseSchema.schema;
+  } else if (request.responseSchema) {
     if (compat.structuredOutput !== 'text_format') {
       // 'none' (ou um formato de outro fio): não dá para afirmar que o endpoint aplica o schema, e
       // ignorar entregaria texto livre a quem pediu JSON.
@@ -288,11 +294,13 @@ function statusOfError(error) {
 function normalizeUsage(u) {
   if (!u || typeof u !== 'object') return makeUsage({ raw: null });
   const cacheRead = num(u.input_tokens_details?.cached_tokens);
+  const cacheWrite = num(u.input_tokens_details?.cache_write_tokens);
   const reasoning = u.output_tokens_details?.reasoning_tokens;
   return makeUsage({
-    input: Math.max(0, num(u.input_tokens) - cacheRead),
+    input: Math.max(0, num(u.input_tokens) - cacheRead - cacheWrite),
     output: num(u.output_tokens),
     cacheRead,
+    cacheWrite,
     ...(typeof reasoning === 'number' && Number.isFinite(reasoning) ? { reasoning } : {}),
     raw: u,
   });
@@ -314,6 +322,7 @@ function incompleteReason(reason) {
  * @type {ApiModule['parseStream']}
  */
 export async function* parseStream(events, { account, model }) {
+  let refused = false;
   /** @type {Ctx} */
   const ctx = { provider: account?.provider, model: model.id };
   /** item.id (ou output_index) → chamada em andamento @type {Map<string, { callId: string, name: string, args: string }>} */
@@ -398,6 +407,11 @@ export async function* parseStream(events, { account, model }) {
         }
         break;
 
+      // Recusa do modelo: o texto chega como resposta, e o fim diz que foi recusa.
+      case 'response.refusal.delta':
+        if (typeof chunk.delta === 'string' && chunk.delta) { emitted = true; refused = true; yield { type: 'text', text: chunk.delta }; }
+        break;
+
       case 'response.completed':
         final = chunk.response ?? {};
         kind = 'completed';
@@ -424,7 +438,7 @@ export async function* parseStream(events, { account, model }) {
   }
   const finishReason = kind === 'incomplete'
     ? incompleteReason(final.incomplete_details?.reason)
-    : sawCall ? 'tool_calls' : 'stop';
+    : sawCall ? 'tool_calls' : refused ? 'content_filter' : 'stop';
   return {
     finishReason,
     usage: normalizeUsage(final.usage),

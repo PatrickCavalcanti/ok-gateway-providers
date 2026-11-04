@@ -208,7 +208,7 @@ test('responseSchema: text.format com structuredOutput text_format; nome e stric
 test('responseSchema com outro structuredOutput dá unsupported (a conta genérica é conservadora)', () => {
   const req = { messages: hi, responseSchema: { schema: { type: 'object' } } };
   throwsType(() => build(req), 'unsupported', true);
-  for (const structuredOutput of ['response_format', 'top_level_json_schema', 'output_config', 'response_json_schema']) {
+  for (const structuredOutput of ['response_format', 'output_config', 'response_json_schema']) {
     throwsType(() => build(req, { compat: { structuredOutput } }), 'unsupported', true);
   }
 });
@@ -308,13 +308,13 @@ async function chatError(/** @type {string} */ sse) {
 
 test('response.output_text.delta vira text; response.completed fecha com stop e uso', async () => {
   const { events, result } = await chat(fixture('text.sse'), { mdl: { ...model, cost: { input: 1, output: 2 } } });
-  assert.deepEqual(events.slice(0, 2), [{ type: 'text', text: 'Olá' }, { type: 'text', text: ', mundo!' }]);
-  assert.equal(events.length, 3);
-  assert.equal(events[2].type, 'end');
+  assert.deepEqual(events[0], { type: 'text', text: 'pong' });
+  assert.equal(events.length, 2);
+  assert.equal(events[1].type, 'end');
   assert.equal(result.finishReason, 'stop');
-  assert.deepEqual({ ...result.usage, raw: undefined }, { input: 14, output: 6, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0, raw: undefined });
-  assert.equal(/** @type {any} */ (result.usage.raw).total_tokens, 20);
-  assert.deepEqual(result.cost, { usd: 0.000026, source: 'table' });
+  assert.deepEqual({ ...result.usage, raw: undefined }, { input: 12, output: 5, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reasoning: 0, raw: undefined });
+  assert.equal(/** @type {any} */ (result.usage.raw).total_tokens, 17);
+  assert.deepEqual(result.cost, { usd: 0.000022, source: 'table' });
 });
 
 test('uso: input sem o cache lido, reasoning de output_tokens_details e raw', async () => {
@@ -338,7 +338,7 @@ test('response.reasoning_summary_text.delta vira reasoning', async () => {
 });
 
 test('function_call: guarda call_id e name pelo item.id, acumula os argumentos e emite no output_item.done', async () => {
-  const { events, result } = await chat(fixture('tool-call.sse'), { request: { messages: hi, tools } });
+  const { events, result } = await chat(fixture('tool-call-two.sse'), { request: { messages: hi, tools } });
   assert.deepEqual(events.slice(0, 2), [
     { type: 'tool_call', id: 'call_clima1', name: 'clima', arguments: '{"cidade":"Campo Grande"}' },
     { type: 'tool_call', id: 'call_hora2', name: 'hora', arguments: '{}' },
@@ -515,4 +515,55 @@ test('ciclo completo: tool call, resultado devolvido com function_call_output e 
     { type: 'function_call', call_id: 'call_clima3', name: 'clima', arguments: '{"cidade":"Dourados"}' },
     { type: 'function_call_output', call_id: 'call_clima3', output: '31 graus' },
   ]);
+});
+
+test('resposta real com tool call: nome, argumentos e fim tool_calls', async () => {
+  const { events, result } = await chat(fixture('tool-call.sse'), { request: { messages: hi, tools } });
+  const call = events.find((e) => e.type === 'tool_call');
+  assert.equal(call.name, 'horas_em');
+  assert.match(call.id, /^call_/);
+  assert.match(JSON.parse(call.arguments).cidade, /Dourados/);
+  assert.equal(result.finishReason, 'tool_calls');
+});
+
+test('resposta real com saída estruturada: JSON válido', async () => {
+  const { events, result } = await chat(fixture('structured.sse'));
+  const text = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
+  assert.equal(typeof JSON.parse(text).nome, 'string');
+  assert.equal(result.finishReason, 'stop');
+});
+
+test('recusa do modelo: o texto vem, e o fim é content_filter', async () => {
+  const sse = [
+    'data: {"type":"response.refusal.delta","delta":"Não posso ajudar."}',
+    '',
+    'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}',
+    '',
+    '',
+  ].join('\n');
+  const { events, result } = await chat(sse);
+  assert.deepEqual(events[0], { type: 'text', text: 'Não posso ajudar.' });
+  assert.equal(result.finishReason, 'content_filter');
+});
+
+test('top_level_json_schema: schema solto no topo, para o llama.cpp', () => {
+  const schema = { type: 'object', properties: {} };
+  const acc = { id: 'l', provider: 'llama', api: 'openai-responses', baseUrl: 'http://x/v1', compat: { structuredOutput: 'top_level_json_schema' } };
+  const { body } = buildRequest({ account: acc, model, compat: resolveCompat(acc, model), apiKey: '', request: { messages: hi, responseSchema: { schema } } });
+  assert.deepEqual(body.json_schema, schema);
+  assert.equal(body.text, undefined);
+});
+
+test('as operações de chamada única valem na conta openai-responses', async () => {
+  const acc = { id: 'o', provider: 'openai', api: 'openai-responses', baseUrl: 'https://x/v1', apiKey: 'k' };
+  const mdl = { id: 'e', operations: ['embeddings'], input: ['text'], output: ['embeddings'] };
+  const f = async () => new Response(JSON.stringify({ data: [{ index: 0, embedding: [1] }], usage: { prompt_tokens: 1 } }));
+  const r = await createClient({ account: acc, model: mdl, fetch: f }).embed({ texts: ['oi'] });
+  assert.deepEqual(r.vectors, [[1]]);
+});
+
+test('uso: gravação de cache sai do input, como o cache lido', async () => {
+  const sse = 'data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":1,"input_tokens_details":{"cached_tokens":30,"cache_write_tokens":20}}}}\n\n';
+  const { result } = await chat(sse);
+  assert.deepEqual([result.usage.input, result.usage.cacheRead, result.usage.cacheWrite], [50, 30, 20]);
 });

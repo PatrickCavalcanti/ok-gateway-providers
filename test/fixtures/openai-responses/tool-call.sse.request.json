@@ -1,0 +1,30 @@
+{
+  "model": "gpt-5.4-nano",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Use a ferramenta para saber a hora em Dourados."
+    }
+  ],
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "horas_em",
+      "description": "Hora atual numa cidade",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cidade": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cidade"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

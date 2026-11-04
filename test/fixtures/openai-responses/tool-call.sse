@@ -1,36 +1,39 @@
 event: response.created
-data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_0a1b2c","object":"response","created_at":1762300000,"model":"gpt-5.4-nano-2026-03-17","status":"in_progress","output":[],"usage":null}}
+data: {"type":"response.created","response":{"id":"resp_06a7f24722f9fd3a006aeac5e9999887d2b7d4e47680629b27","object":"response","created_at":1793770985,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-nano-2026-03-17","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Hora atual numa cidade","name":"horas_em","output_schema":null,"parameters":{"type":"object","properties":{"cidade":{"type":"string"}},"required":["cidade"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
 
 event: response.in_progress
-data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_0a1b2c","object":"response","created_at":1762300000,"model":"gpt-5.4-nano-2026-03-17","status":"in_progress","output":[],"usage":null}}
+data: {"type":"response.in_progress","response":{"id":"resp_06a7f24722f9fd3a006aeac5e9999887d2b7d4e47680629b27","object":"response","created_at":1793770985,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-nano-2026-03-17","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Hora atual numa cidade","name":"horas_em","output_schema":null,"parameters":{"type":"object","properties":{"cidade":{"type":"string"}},"required":["cidade"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
 
 event: response.output_item.added
-data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"fc_01","type":"function_call","status":"in_progress","arguments":"","call_id":"call_clima1","name":"clima"}}
+data: {"type":"response.output_item.added","item":{"id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","type":"function_call","status":"in_progress","arguments":"","call_id":"call_Z1pqY9sy7YIZToct2CXK1nyw","name":"horas_em"},"output_index":0,"sequence_number":2}
 
 event: response.function_call_arguments.delta
-data: {"type":"response.function_call_arguments.delta","sequence_number":3,"item_id":"fc_01","output_index":0,"delta":"{\"ci"}
-
-event: response.output_item.added
-data: {"type":"response.output_item.added","sequence_number":4,"output_index":1,"item":{"id":"fc_02","type":"function_call","status":"in_progress","arguments":"","call_id":"call_hora2","name":"hora"}}
+data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"wetvPEiX6dbW7W","output_index":0,"sequence_number":3}
 
 event: response.function_call_arguments.delta
-data: {"type":"response.function_call_arguments.delta","sequence_number":5,"item_id":"fc_01","output_index":0,"delta":"dade\":\"Campo Grande\"}"}
+data: {"type":"response.function_call_arguments.delta","delta":"cidade","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"df1zFRayll","output_index":0,"sequence_number":4}
 
 event: response.function_call_arguments.delta
-data: {"type":"response.function_call_arguments.delta","sequence_number":6,"item_id":"fc_02","output_index":1,"delta":"{}"}
+data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"cpJFU9cR03iDr","output_index":0,"sequence_number":5}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"D","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"ChptejmpcpGkqwN","output_index":0,"sequence_number":6}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"our","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"z0WNotNk7tkTV","output_index":0,"sequence_number":7}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"ados","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"3TbQCAnk03RU","output_index":0,"sequence_number":8}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","obfuscation":"Dfsg8EIYh0YPE6","output_index":0,"sequence_number":9}
 
 event: response.function_call_arguments.done
-data: {"type":"response.function_call_arguments.done","sequence_number":7,"item_id":"fc_01","output_index":0,"arguments":"{\"cidade\":\"Campo Grande\"}"}
+data: {"type":"response.function_call_arguments.done","arguments":"{\"cidade\":\"Dourados\"}","item_id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","output_index":0,"sequence_number":10}
 
 event: response.output_item.done
-data: {"type":"response.output_item.done","sequence_number":8,"output_index":0,"item":{"id":"fc_01","type":"function_call","status":"completed","arguments":"{\"cidade\":\"Campo Grande\"}","call_id":"call_clima1","name":"clima"}}
-
-event: response.function_call_arguments.done
-data: {"type":"response.function_call_arguments.done","sequence_number":9,"item_id":"fc_02","output_index":1,"arguments":"{}"}
-
-event: response.output_item.done
-data: {"type":"response.output_item.done","sequence_number":10,"output_index":1,"item":{"id":"fc_02","type":"function_call","status":"completed","arguments":"{}","call_id":"call_hora2","name":"hora"}}
+data: {"type":"response.output_item.done","item":{"id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","type":"function_call","status":"completed","arguments":"{\"cidade\":\"Dourados\"}","call_id":"call_Z1pqY9sy7YIZToct2CXK1nyw","name":"horas_em"},"output_index":0,"sequence_number":11}
 
 event: response.completed
-data: {"type":"response.completed","sequence_number":11,"response":{"id":"resp_0a1b2c","object":"response","created_at":1762300000,"model":"gpt-5.4-nano-2026-03-17","status":"completed","output":[],"usage":{"input_tokens":62,"input_tokens_details":{"cached_tokens":0},"output_tokens":38,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":100}}}
+data: {"type":"response.completed","response":{"id":"resp_06a7f24722f9fd3a006aeac5e9999887d2b7d4e47680629b27","object":"response","created_at":1793770985,"status":"completed","access_programs":null,"background":false,"completed_at":1793770986,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-nano-2026-03-17","moderation":null,"output":[{"id":"fc_06a7f24722f9fd3a006aeac5ea397087d283ed0890b0aa9dd8","type":"function_call","status":"completed","arguments":"{\"cidade\":\"Dourados\"}","call_id":"call_Z1pqY9sy7YIZToct2CXK1nyw","name":"horas_em"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Hora atual numa cidade","name":"horas_em","output_schema":null,"parameters":{"type":"object","properties":{"cidade":{"type":"string"}},"required":["cidade"],"additionalProperties":false},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":53,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":21,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":74},"user":null,"metadata":{}},"sequence_number":12}
 
