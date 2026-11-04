@@ -18,6 +18,12 @@ const BASE = Object.freeze({
   usageInStream: false,
   providerRouting: false,
   cacheMarker: 'none',
+  sttResponseFormat: 'json',
+  ttsDefaultVoice: null,
+  ttsDefaultFormat: null,
+  imagePath: '/images/generations',
+  imageResponseFormat: 'b64_json',
+  decisionPath: null,
   headers: Object.freeze({}),
 });
 

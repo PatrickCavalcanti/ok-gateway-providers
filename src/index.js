@@ -16,5 +16,6 @@ export { createDeadline, DEFAULT_TIMEOUTS } from './timeouts.js';
 export { readSSE } from './sse.js';
 export { resolveCompat, DEFAULT_COMPAT } from './compat.js';
 export { computeCost, tierFor } from './cost.js';
+export { makeUsage, reportedCost } from './usage.js';
 export { createCreditConverter } from './credits.js';
 export { parseOpenRouterModels } from './catalog/openrouter.js';

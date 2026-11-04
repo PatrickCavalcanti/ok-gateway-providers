@@ -13,11 +13,17 @@
  * @property {boolean} [supportsTemperature]
  * @property {'reasoning_effort'|'reasoning_object'|'anthropic_thinking'|'none'} [reasoningFormat]
  * @property {boolean} [thinkingByDefault]
- * @property {'response_format'|'top_level_json_schema'|'output_config'|'none'} [structuredOutput]
+ * @property {'response_format'|'top_level_json_schema'|'output_config'|'response_json_schema'|'text_format'|'none'} [structuredOutput]
  * @property {boolean} [usageInStream]
  * @property {boolean} [providerRouting]
  * @property {'cache_control'|'prompt_cache_breakpoint'|'none'} [cacheMarker]
  * @property {Record<string, string>} [headers]
+ * @property {'json'|'verbose_json'} [sttResponseFormat]
+ * @property {string|null} [ttsDefaultVoice]
+ * @property {string|null} [ttsDefaultFormat]
+ * @property {string} [imagePath]
+ * @property {string|null} [imageResponseFormat]
+ * @property {string|null} [decisionPath]
  */
 
 /** @typedef {Required<Compat>} ResolvedCompat */
@@ -44,6 +50,7 @@
  * @property {number} [cacheWrite1h]
  * @property {number} [audioPerSecond]
  * @property {number} [minBilledSeconds]
+ * @property {number} [cacheStoragePerMTokHour]
  * @property {CostTier[]} [tiers]
  */
 
@@ -62,8 +69,8 @@
 /**
  * @typedef {object} Transport
  * @property {('data-url'|'url')[]} [image]  padrão ['data-url','url']
- * @property {'input_audio'|null} [audio]
- * @property {'input_video'|'video_url'|null} [video]
+ * @property {'input_audio'|'inline_data'|null} [audio]
+ * @property {'input_video'|'video_url'|'inline_data'|null} [video]
  * @property {('data-url'|'url')[]} [file]  padrão ['data-url'] (documento: PDF, texto…)
  */
 
@@ -120,6 +127,7 @@
  * @property {number} [temperature]
  * @property {Record<string, unknown>} [params]
  * @property {AbortSignal} [signal]
+ * @property {import('./timeouts.js').Timeouts} [timeouts]
  */
 
 /**
@@ -133,6 +141,7 @@
  * @property {number} cacheWrite1h
  * @property {number} [reasoning]
  * @property {number} [audioSeconds]
+ * @property {number} [cacheStorageTokenHours]
  * @property {boolean} [missing]  true quando o provedor não declarou uso nenhum: o custo
  *   pela tabela vira `{ usd: null, source: 'none' }`, nunca US$ 0
  * @property {unknown} [raw]
@@ -155,10 +164,34 @@
  */
 
 /**
+ * O que `parseResponse` recebe. `json()` e `bytes()` leem o corpo uma vez só.
+ * @typedef {object} OneShotResponse
+ * @property {number} status
+ * @property {Headers} headers
+ * @property {() => Promise<any>} json   JSON inválido vira ProviderError `upstream`
+ * @property {() => Promise<Uint8Array>} bytes
+ */
+
+/**
+ * @typedef {object} OperationContext
+ * @property {Account} account
+ * @property {Model} model
+ * @property {ResolvedCompat} compat
+ * @property {any} request
+ */
+
+/**
+ * @typedef {object} OperationModule
+ * @property {(args: OperationContext & { apiKey: string }) => { url: string, headers: Record<string, string>, body: Record<string, unknown> | FormData }} buildRequest
+ * @property {(res: OneShotResponse, ctx: OperationContext) => Promise<{ result: Record<string, unknown>, usage: Usage, reportedCostUsd?: number|null }>} parseResponse
+ */
+
+/**
  * @typedef {object} ApiModule
  * @property {Api} api
  * @property {(args: { account: Account, model: Model, compat: ResolvedCompat, request: ChatRequest, apiKey: string }) => { url: string, headers: Record<string, string>, body: Record<string, unknown> }} buildRequest
- * @property {(events: AsyncIterable<import('./sse.js').SSEEvent>, ctx: { account: Account, model: Model, compat: ResolvedCompat }) => AsyncGenerator<Exclude<ChatEvent, { type: 'end' }>, StreamSummary, undefined>} parseStream
+ * @property {(events: AsyncIterable<import('./sse.js').SSEEvent>, ctx: { account: Account, model: Model, compat: ResolvedCompat, headers: Headers }) => AsyncGenerator<Exclude<ChatEvent, { type: 'end' }>, StreamSummary, undefined>} parseStream
+ * @property {Partial<Record<Exclude<import('./vocabulary.js').Operation, 'chat'>, OperationModule>>} [operations]
  */
 
 export {};
