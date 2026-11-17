@@ -243,3 +243,64 @@ test('palpite por posição não vence apelido provado: o done com ids novos nã
   assert.equal(r.error, null);
   assert.deepEqual(r.calls.map((c) => c.arguments), [same, same]);
 });
+
+// ---------------------------------------------------------------------------------------
+// M9 (texto final só de `message`/`output_text`) e raciocínio devolvido entre turnos
+
+test('M9: item reasoning no evento final nunca vira texto (llama.cpp traz o raciocínio em content[].text)', async () => {
+  const reasoning = { type: 'reasoning', id: 'rs_x', content: [{ type: 'reasoning_text', text: 'pensando em voz alta' }], summary: [{ type: 'summary_text', text: 'resumo' }] };
+  const msg = { type: 'message', content: [{ type: 'output_text', text: 'resposta' }] };
+  const both = await run([completed([reasoning, msg])]);
+  assert.deepEqual(both.out.filter((e) => e.type === 'text'), [{ type: 'text', text: 'resposta' }]);
+  const onlyReasoning = await run([completed([reasoning])]);
+  assert.deepEqual(onlyReasoning.out.filter((e) => e.type === 'text'), []);
+  // parte de outro tipo dentro da message também não é resposta
+  const odd = await run([completed([{ type: 'message', content: [{ type: 'reasoning_text', text: 'x' }, { type: 'output_text', text: 'ok' }] }])]);
+  assert.deepEqual(odd.out.filter((e) => e.type === 'text'), [{ type: 'text', text: 'ok' }]);
+});
+
+test('M9: recusa só vale dentro de uma message', async () => {
+  const stray = await run([completed([{ type: 'reasoning', id: 'rs_x', content: [{ type: 'refusal', refusal: 'não' }] }])]);
+  assert.deepEqual(stray.out.filter((e) => e.type === 'text'), []);
+  assert.equal(stray.finish, 'stop');
+  const real = await run([completed([{ type: 'message', content: [{ type: 'refusal', refusal: 'não posso' }] }])]);
+  assert.deepEqual(real.out.filter((e) => e.type === 'text'), [{ type: 'text', text: 'não posso' }]);
+  assert.equal(real.finish, 'content_filter');
+});
+
+const reasoningDone = (id, extra = {}) => ({ type: 'response.output_item.done', output_index: 0, item: { type: 'reasoning', id, summary: [], ...extra } });
+
+test('o raciocínio do turno vai nos providerData da primeira tool call, uma vez só', async () => {
+  const r = await run([
+    reasoningDone('rs_1', { encrypted_content: 'ENC' }),
+    added('a', 'c1', 1), done({ id: 'a', call_id: 'c1', arguments: '{"a":1}' }, 1),
+    added('b', 'c2', 2), done({ id: 'b', call_id: 'c2', arguments: '{"b":2}' }, 2),
+    completed(),
+  ]);
+  assert.equal(r.error, null);
+  assert.deepEqual(r.calls[0].providerData, { reasoningItems: [{ type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'ENC' }] });
+  assert.equal('providerData' in r.calls[1], false);
+});
+
+test('sem raciocínio no stream, sem providerData (o evento final chega tarde demais para a chamada que já saiu)', async () => {
+  const viaFinal = await run([added('a', 'c1'), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 0), completed([{ type: 'reasoning', id: 'rs_9', summary: [] }])]);
+  assert.equal('providerData' in viaFinal.calls[0], false);
+  const none = await run([added('a', 'c1'), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 0), completed()]);
+  assert.equal('providerData' in none.calls[0], false);
+});
+
+test('item reasoning do llama.cpp (sem id rs_ e sem cifra) não vira providerData', async () => {
+  const r = await run([
+    { type: 'response.output_item.done', output_index: 0, item: { type: 'reasoning', id: 'x1', content: [{ type: 'reasoning_text', text: 'hm' }] } },
+    added('a', 'c1', 1), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 1), completed(),
+  ]);
+  assert.equal('providerData' in r.calls[0], false);
+});
+
+test('item reasoning repetido pelo mesmo id fica uma vez, com a versão mais nova', async () => {
+  const r = await run([
+    reasoningDone('rs_1'), reasoningDone('rs_1', { encrypted_content: 'ENC' }),
+    added('a', 'c1', 1), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 1), completed(),
+  ]);
+  assert.deepEqual(r.calls[0].providerData.reasoningItems.map((i) => [i.id, i.encrypted_content]), [['rs_1', 'ENC']]);
+});

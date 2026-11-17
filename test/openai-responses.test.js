@@ -657,3 +657,66 @@ test('recusa só no item final: vira texto e content_filter', async () => {
   assert.deepEqual(events[0], { type: 'text', text: 'Não posso.' });
   assert.equal(result.finishReason, 'content_filter');
 });
+
+// ---------------------------------------------------------------------------------------
+// raciocínio entre turnos (OpenAI): volta antes da mensagem e das chamadas
+
+const rs = (id, extra = {}) => ({ type: 'reasoning', id, summary: [], ...extra });
+const turn = (providerData) => [
+  { role: 'user', content: 'faça' },
+  { role: 'assistant', content: 'vou chamar', toolCalls: [{ id: 'call_1', name: 'f', arguments: '{"a":1}', ...(providerData ? { providerData } : {}) }] },
+  { role: 'tool', toolCallId: 'call_1', content: 'ok' },
+];
+
+test('providerData.reasoningItems volta como itens reasoning antes da message e do function_call', () => {
+  const { input } = build({ messages: turn({ reasoningItems: [rs('rs_1')] }) }).body;
+  assert.deepEqual(input.map((i) => i.type), ['message', 'reasoning', 'message', 'function_call', 'function_call_output']);
+  assert.deepEqual(input[1], rs('rs_1'));
+  assert.equal(input[3].call_id, 'call_1');
+  assert.equal(typeof input[3].arguments, 'string');
+});
+
+test('reasoningItems repetido em duas tool calls do mesmo turno entra uma vez; providerData de outro fio é ignorado', () => {
+  const messages = [
+    { role: 'user', content: 'x' },
+    { role: 'assistant', content: '', toolCalls: [
+      { id: 'c1', name: 'f', arguments: '{}', providerData: { reasoningItems: [rs('rs_1')] } },
+      { id: 'c2', name: 'f', arguments: '{}', providerData: { reasoningItems: [rs('rs_1')] } },
+      { id: 'c3', name: 'f', arguments: '{}', providerData: { thoughtSignature: 'sig' } },
+    ] },
+  ];
+  const types = build({ messages }).body.input.map((i) => i.type);
+  assert.deepEqual(types, ['message', 'reasoning', 'function_call', 'function_call', 'function_call']);
+});
+
+test('store false: reasoning sem cifra sai do input, e include pede o conteúdo cifrado', () => {
+  const compat = { supportsStore: true, reasoningFormat: 'reasoning_object' };
+  const { body } = build({ effort: 'xhigh', messages: turn({ reasoningItems: [rs('rs_1'), rs('rs_2', { encrypted_content: 'ENC' })] }) }, { compat });
+  assert.equal(body.store, false);
+  assert.deepEqual(body.input.filter((i) => i.type === 'reasoning').map((i) => i.id), ['rs_2']);
+  assert.deepEqual(body.include, ['reasoning.encrypted_content']);
+  assert.deepEqual(body.reasoning, { effort: 'xhigh' });
+});
+
+test('store false: include do params se mantém e não duplica; sem raciocínio no pedido, sem include', () => {
+  const compat = { supportsStore: true, reasoningFormat: 'reasoning_object' };
+  const params = { include: ['message.output_text.logprobs', 'reasoning.encrypted_content'] };
+  assert.deepEqual(build({ effort: 'low', messages: hi, params }, { compat }).body.include, params.include);
+  assert.deepEqual(build({ effort: 'low', messages: hi, params: { include: ['file_search_call.results'] } }, { compat }).body.include, ['file_search_call.results', 'reasoning.encrypted_content']);
+  assert.equal('include' in build({ messages: hi }, { compat }).body, false);
+});
+
+test('store padrão: reasoning com id volta como está e não há include', () => {
+  const { body } = build({ effort: 'low', messages: turn({ reasoningItems: [rs('rs_1')] }) }, { compat: { reasoningFormat: 'reasoning_object' } });
+  assert.equal('store' in body, false);
+  assert.equal('include' in body, false);
+  assert.equal(body.input.filter((i) => i.type === 'reasoning').length, 1);
+});
+
+test('prompt_cache_key e prompt_cache_retention passam por params; max_output_tokens e reasoning.effort vêm do pedido', () => {
+  const { body } = build({ effort: 'xhigh', maxTokens: 500, messages: hi, params: { prompt_cache_key: 'k', prompt_cache_retention: '24h' } }, { compat: { reasoningFormat: 'reasoning_object' } });
+  assert.equal(body.prompt_cache_key, 'k');
+  assert.equal(body.prompt_cache_retention, '24h');
+  assert.equal(body.max_output_tokens, 500);
+  assert.deepEqual(body.reasoning, { effort: 'xhigh' });
+});

@@ -8,7 +8,7 @@
 import { ProviderError, errorFromStatus, unsupported } from '../errors.js';
 import { assertMediaSupported, defaultFilename, parseDataUrl } from '../attachments.js';
 import { makeUsage, num, reportedCost } from '../usage.js';
-import { applyParams, fuse } from '../params.js';
+import { applyParams, fuse, isPlainObject } from '../params.js';
 
 /** @typedef {import('../types.js').ApiModule} ApiModule */
 /** @typedef {import('../types.js').Message} Message */
@@ -87,6 +87,11 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
   // `provider` (roteamento do OpenRouter) só passa com compat.providerRouting.
   applyParams(body, [model.params, request.params], (k) => PROTECTED_KEYS.has(k) || (k === 'provider' && !compat.providerRouting));
 
+  if (body.store === false) {
+    // Sem armazenamento na OpenAI, o raciocínio só volta cifrado: o item sem `encrypted_content` é referência a algo que ela não guardou.
+    body.input = body.input.filter((/** @type {any} */ item) => item.type !== 'reasoning' || typeof item.encrypted_content === 'string');
+  }
+
   // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo
   // (`text.verbosity`, `reasoning.summary`… dos params ficam). `model.maxTokens` é o TETO do modelo, não um valor a enviar.
   if (request.responseSchema) {
@@ -98,6 +103,11 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
     }
   }
   if (request.effort !== undefined && compat.reasoningFormat === 'reasoning_object') fuse(body, 'reasoning', { effort: request.effort });
+  // Com `store: false` o raciocínio só chega ao chamador (e volta no turno seguinte) se vier cifrado.
+  if (body.store === false && body.reasoning) {
+    const include = Array.isArray(body.include) ? body.include : [];
+    if (!include.includes('reasoning.encrypted_content')) body.include = [...include, 'reasoning.encrypted_content'];
+  }
   if (request.maxTokens !== undefined) body[compat.maxTokensField] = request.maxTokens;
   if (request.temperature !== undefined && compat.supportsTemperature) body.temperature = request.temperature;
   if (choice !== undefined) body.tool_choice = typeof choice === 'string' ? choice : { type: 'function', name: choice.name };
@@ -145,6 +155,7 @@ function buildInput(request, { model, provider }) {
   const out = [];
 
   const system = systemText(request.system);
+  // Sempre `system`, mesmo com supportsDeveloperRole: a OpenAI o trata como `developer` nos modelos de raciocínio, e o llama.cpp só o conhece assim.
   if (system !== undefined) out.push({ type: 'message', role: 'system', content: system });
 
   request.messages.forEach((msg, i) => {
@@ -159,6 +170,9 @@ function buildInput(request, { model, provider }) {
       const text = textOnly(msg.content, 'assistant', ctx, where, true);
       const calls = msg.toolCalls ?? [];
       if (!Array.isArray(calls)) throw invalid(`${where}: toolCalls precisa ser uma lista`, ctx);
+      // Raciocínio do turno que chamou as tools (`providerData.reasoningItems`, vindo do stream): volta antes da
+      // mensagem e das chamadas. Sem ele a OpenAI não dá erro, mas o modelo perde o raciocínio e refaz o trabalho.
+      out.push(...reasoningItemsOf(calls));
       // Turno vazio não diz nada ao modelo, e a Responses API aceita itens soltos: sem texto, não há message.
       if (text) out.push({ type: 'message', role: 'assistant', content: text });
       calls.forEach((call, k) => {
@@ -176,6 +190,29 @@ function buildInput(request, { model, provider }) {
       throw invalid(`${where}: papel de mensagem desconhecido: ${String(/** @type {any} */ (msg).role)}`, ctx);
     }
   });
+  return out;
+}
+
+/**
+ * Itens `reasoning` guardados nos `providerData` das tool calls de um turno do assistant, sem repetição.
+ * O fio só devolve o que ele mesmo entregou no stream (`providerData.reasoningItems`); outro formato é ignorado.
+ * @param {import('../types.js').ToolCall[]} calls @returns {Record<string, unknown>[]}
+ */
+function reasoningItemsOf(calls) {
+  /** @type {Record<string, unknown>[]} */
+  const out = [];
+  const seen = new Set();
+  for (const call of calls) {
+    const items = /** @type {any} */ (call?.providerData)?.reasoningItems;
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!isPlainObject(item) || item.type !== 'reasoning') continue;
+      const key = typeof item.id === 'string' ? item.id : JSON.stringify(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+    }
+  }
   return out;
 }
 
@@ -518,6 +555,9 @@ export async function* parseStream(events, { account, model }) {
   /** Saiu texto (delta ou recusa): o texto do evento final só entra quando nada disso saiu. */
   let textOut = false;
   let callCount = 0;
+  /** Itens `reasoning` do turno, na ordem. Vão nos `providerData` da primeira tool call, para o chamador devolver. @type {Record<string, unknown>[]} */
+  const reasoningItems = [];
+  let reasoningSent = false;
   /** @type {any} */ let final = null;
   /** @type {'completed'|'incomplete'|null} */ let kind = null;
 
@@ -540,7 +580,10 @@ export async function* parseStream(events, { account, model }) {
     emitted = true;
     const id = rec.callId || rec.itemId || `call_${callCount}`;
     callCount += 1;
-    return /** @type {const} */ ({ type: 'tool_call', id, name: rec.name, arguments: text });
+    // O raciocínio vem antes das chamadas no turno; basta uma delas carregá-lo.
+    const carry = !reasoningSent && reasoningItems.length > 0;
+    if (carry) reasoningSent = true;
+    return /** @type {const} */ ({ type: 'tool_call', id, name: rec.name, arguments: text, ...(carry ? { providerData: { reasoningItems: [...reasoningItems] } } : {}) });
   };
 
   for await (const ev of events) {
@@ -581,6 +624,7 @@ export async function* parseStream(events, { account, model }) {
       }
 
       case 'response.output_item.done':
+        if (chunk.item?.type === 'reasoning') keepReasoning(reasoningItems, chunk.item);
         if (chunk.item?.type === 'function_call') {
           const index = indexKey(chunk.output_index);
           const rec = registry.locateDone([...aliasesOf(chunk.item.id, chunk.item.call_id), ...index], chunk.item, index.length > 0);
@@ -624,12 +668,16 @@ export async function* parseStream(events, { account, model }) {
   // O evento final traz tudo de novo: funde nos registros antes de emitir o que falta.
   const finalOutput = Array.isArray(final.output) ? final.output : [];
   registry.mergeFinal(finalOutput.filter((/** @type {any} */ item) => item?.type === 'function_call'));
+  for (const item of finalOutput) if (item?.type === 'reasoning') keepReasoning(reasoningItems, item);
 
-  // Servidor que copia o formato pode não ter mandado o texto em delta: ele está no item final.
+  // Servidor que copia o formato pode não ter mandado o texto em delta: ele está no item final. Só texto de
+  // `message` (`output_text`) é resposta: o item `reasoning` do llama.cpp também traz `content[].text`, e esse é
+  // o raciocínio, que nunca vira texto.
   if (!textOut) {
     for (const item of finalOutput) {
-      for (const part of Array.isArray(item?.content) ? item.content : []) {
-        if (part?.type !== 'refusal' && typeof part?.text === 'string' && part.text) {
+      if (item?.type !== 'message') continue;
+      for (const part of Array.isArray(item.content) ? item.content : []) {
+        if (part?.type === 'output_text' && typeof part.text === 'string' && part.text) {
           emitted = true;
           textOut = true;
           yield { type: 'text', text: part.text };
@@ -640,7 +688,8 @@ export async function* parseStream(events, { account, model }) {
   // Recusa que só vem no item final, sem delta.
   if (!refused) {
     for (const item of finalOutput) {
-      for (const part of Array.isArray(item?.content) ? item.content : []) {
+      if (item?.type !== 'message') continue;
+      for (const part of Array.isArray(item.content) ? item.content : []) {
         if (part?.type === 'refusal' && typeof part.refusal === 'string' && part.refusal) {
           refused = true;
           emitted = true;
@@ -671,6 +720,21 @@ export async function* parseStream(events, { account, model }) {
     usage: normalizeUsage(final.usage),
     reportedCostUsd: reportedCost(final.usage?.cost),
   };
+}
+
+/**
+ * Guarda um item `reasoning` para devolver ao modelo no turno seguinte (`id`, `summary` e, se veio, o
+ * `encrypted_content`). Só da OpenAI: id `rs_…` ou conteúdo cifrado. O raciocínio em claro do llama.cpp
+ * (`content`) não é formato de entrada, e é descartado. Repetição pelo mesmo id é ignorada.
+ * @param {Record<string, unknown>[]} list @param {any} item
+ */
+function keepReasoning(list, item) {
+  const id = typeof item.id === 'string' ? item.id : '';
+  const encrypted = typeof item.encrypted_content === 'string' && item.encrypted_content ? item.encrypted_content : '';
+  if (!encrypted && !id.startsWith('rs_')) return;
+  const kept = { type: 'reasoning', ...(id ? { id } : {}), summary: Array.isArray(item.summary) ? item.summary : [], ...(encrypted ? { encrypted_content: encrypted } : {}) };
+  const at = id ? list.findIndex((r) => r.id === id) : -1;
+  if (at >= 0) list[at] = kept; else list.push(kept);
 }
 
 /**

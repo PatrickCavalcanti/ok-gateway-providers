@@ -80,6 +80,16 @@ if (process.env.OPENAI_API_KEY) {
   console.log('pulado: openai (sem OPENAI_API_KEY)');
 }
 
+if (process.env.OPENAI_API_KEY) {
+  targets.push({
+    name: 'openai-responses',
+    account: { id: 'smoke-openai', provider: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1', apiKey: process.env.OPENAI_API_KEY, compat: { structuredOutput: 'text_format', reasoningFormat: 'reasoning_object' } },
+    model: { id: 'gpt-5.4-nano', operations: ['chat'], input: ['text', 'image', 'file'], output: ['text'] },
+  });
+} else {
+  console.log('pulado: openai-responses (sem OPENAI_API_KEY)');
+}
+
 const cases = [
   {
     name: 'texto',

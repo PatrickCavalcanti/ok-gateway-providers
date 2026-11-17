@@ -8,7 +8,7 @@ Fala com provedores de IA a partir de três entradas: uma **conta**, um **modelo
   planejamento de cache são do cliente. A lib dá o que ele precisa para decidir:
   `retryOther` e `emitted` no erro.
 - Fios: `openai-completions` (OpenAI em estilo chat, OpenRouter, Groq, Ollama `/v1`,
-  Inception, DeepSeek, llama.cpp, Igris Gateway), `anthropic-messages` e
+  Inception, DeepSeek, llama.cpp, Igris Gateway), `openai-responses`, `anthropic-messages` e
   `google-generative-ai`.
 - Operações: `chat`, com tools, saída estruturada, raciocínio e anexos; embeddings,
   transcrição, fala, geração de imagem e decisão.
@@ -119,7 +119,7 @@ no stream e sem marcador de cache. Ligue o que o endpoint suporta.
 | `supportsDeveloperRole`, `supportsStore`, `supportsTemperature` | bool |
 | `reasoningFormat` | `reasoning_effort` · `reasoning_object` · `anthropic_thinking` · `none` |
 | `thinkingByDefault` | bool (Anthropic) |
-| `structuredOutput` | `response_format` · `top_level_json_schema` (llama.cpp) · `output_config` (Anthropic) · `response_json_schema` (Gemini) · `none` |
+| `structuredOutput` | `response_format` · `top_level_json_schema` (llama.cpp) · `output_config` (Anthropic) · `response_json_schema` (Gemini) · `text_format` (Responses) · `none` |
 | `usageInStream` | bool (`stream_options.include_usage`) |
 | `providerRouting` | bool: aceita o objeto `provider` do OpenRouter em `params` |
 | `cacheMarker` | `cache_control` · `prompt_cache_breakpoint` · `none` |
@@ -262,6 +262,7 @@ pacote.
 |---|---|---|
 | OpenRouter | `openai-completions` | `{ usageInStream: true, providerRouting: true, reasoningFormat: 'reasoning_object', imagePath: '/images', imageResponseFormat: null, decisionPath: '../alpha/decisions' }` |
 | OpenAI, estilo chat | `openai-completions` | `{ usageInStream: true, maxTokensField: 'max_completion_tokens', reasoningFormat: 'reasoning_effort', structuredOutput: 'response_format', ttsDefaultVoice: 'onyx', ttsDefaultFormat: 'mp3' }` |
+| OpenAI, Responses | `openai-responses` | `{ reasoningFormat: 'reasoning_object', structuredOutput: 'text_format' }`; `supportsStore: true` manda `store: false`. O `effort` só vira `reasoning.effort` com `reasoning_object`. Os modelos `gpt-6-*` recusam raciocínio com tools no estilo chat, e aqui funcionam |
 | Groq | `openai-completions` | `{ sttResponseFormat: 'verbose_json' }` |
 | TypeSafe | `openai-completions` | `{ decisionPath: 'systemone' }` |
 | Anthropic | `anthropic-messages` | padrão. No modelo da geração 5: `{ thinkingByDefault: true, supportsTemperature: false }` |
@@ -309,6 +310,13 @@ messages.push({ role: 'assistant', content, toolCalls });
 ```
 
 Parte `reasoning` sem assinatura (raciocínio de outro provedor) é ignorada em todos os fios.
+
+No fio `openai-responses`, o raciocínio do turno que chamou tools vem no `providerData.reasoningItems` da
+primeira `tool_call` (itens `reasoning` da OpenAI, `id` `rs_…`). Devolva o `providerData` como no exemplo e o fio
+os repõe no `input` antes das chamadas. A OpenAI não dá erro sem eles, mas o modelo perde o raciocínio e
+refaz o trabalho. Com `compat.supportsStore: true` o pedido leva `store: false` e
+`include: ['reasoning.encrypted_content']`, e só os itens cifrados voltam. O texto final da resposta vem só de
+itens `message`: o item `reasoning` nunca vira texto.
 
 ## Catálogo
 
