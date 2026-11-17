@@ -3,7 +3,6 @@
 
 /** @typedef {import('./timeouts.js').Timeouts} Timeouts */
 
-// `openai-responses` ainda não tem fio: volta com a E4. Conta com esse `api` dá `unsupported` antes do fetch.
 /** @typedef {'openai-completions'|'anthropic-messages'|'openai-responses'|'google-generative-ai'} Api */
 
 /**
@@ -14,7 +13,7 @@
  * @property {boolean} [supportsTemperature]
  * @property {'reasoning_effort'|'reasoning_object'|'anthropic_thinking'|'none'} [reasoningFormat]
  * @property {boolean} [thinkingByDefault]
- * @property {'response_format'|'top_level_json_schema'|'output_config'|'response_json_schema'|'none'} [structuredOutput]
+ * @property {'response_format'|'top_level_json_schema'|'output_config'|'response_json_schema'|'text_format'|'none'} [structuredOutput]
  * @property {boolean} [usageInStream]
  * @property {boolean} [providerRouting]
  * @property {'cache_control'|'prompt_cache_breakpoint'|'none'} [cacheMarker]
