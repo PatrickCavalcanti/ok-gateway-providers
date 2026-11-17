@@ -278,13 +278,14 @@ test('o raciocínio do turno vai nos providerData da primeira tool call, uma vez
     completed(),
   ]);
   assert.equal(r.error, null);
-  assert.deepEqual(r.calls[0].providerData, { reasoningItems: [{ type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'ENC' }] });
+  assert.deepEqual(r.calls[0].providerData, { reasoningItems: [{ type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'ENC' }], order: ['r:rs_1', 'c:c1', 'c:c2'] });
   assert.equal('providerData' in r.calls[1], false);
 });
 
-test('sem raciocínio no stream, sem providerData (o evento final chega tarde demais para a chamada que já saiu)', async () => {
-  const viaFinal = await run([added('a', 'c1'), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 0), completed([{ type: 'reasoning', id: 'rs_9', summary: [] }])]);
-  assert.equal('providerData' in viaFinal.calls[0], false);
+test('raciocínio que só vem no evento final: a primeira chamada, já emitida, passa a carregá-lo (versão cifrada incluída)', async () => {
+  const stream = [added('a', 'c1'), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 0)];
+  const viaFinal = await run([...stream, completed([{ type: 'reasoning', id: 'rs_9', summary: [], encrypted_content: 'ENC' }, fcall({ id: 'a', call_id: 'c1', arguments: '{}' })])]);
+  assert.deepEqual(viaFinal.calls[0].providerData, { reasoningItems: [{ type: 'reasoning', id: 'rs_9', summary: [], encrypted_content: 'ENC' }], order: ['r:rs_9', 'c:c1'] });
   const none = await run([added('a', 'c1'), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 0), completed()]);
   assert.equal('providerData' in none.calls[0], false);
 });
@@ -303,4 +304,23 @@ test('item reasoning repetido pelo mesmo id fica uma vez, com a versão mais nov
     added('a', 'c1', 1), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 1), completed(),
   ]);
   assert.deepEqual(r.calls[0].providerData.reasoningItems.map((i) => [i.id, i.encrypted_content]), [['rs_1', 'ENC']]);
+});
+
+test('a cifra que só chega completa no evento final vence a cópia do item parcial, na mesma referência', async () => {
+  const r = await run([
+    reasoningDone('rs_1'),
+    added('a', 'c1', 1), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 1),
+    completed([{ type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'ENC-FINAL' }, fcall({ id: 'a', call_id: 'c1', arguments: '{}' })]),
+  ]);
+  assert.deepEqual(r.calls[0].providerData.reasoningItems, [{ type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'ENC-FINAL' }]);
+});
+
+test('a ordem do evento final (raciocínio, mensagem, chamadas) é a que vai no providerData', async () => {
+  const r = await run([
+    reasoningDone('rs_1', { encrypted_content: 'E' }),
+    { type: 'response.output_item.done', output_index: 1, item: { type: 'message', id: 'msg_1', content: [] } },
+    added('a', 'c1', 2), done({ id: 'a', call_id: 'c1', arguments: '{}' }, 2),
+    completed([{ type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'E' }, { type: 'message', content: [{ type: 'output_text', text: 'x' }] }, fcall({ id: 'a', call_id: 'c1', arguments: '{}' })]),
+  ]);
+  assert.deepEqual(r.calls[0].providerData.order, ['r:rs_1', 'm', 'c:c1']);
 });

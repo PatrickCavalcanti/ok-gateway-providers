@@ -155,7 +155,28 @@ test('tool: function_call_output; isError prefixa o texto; toolName é ignorado'
     { type: 'function_call_output', call_id: 'call_3', output: 'ok' },
   ]);
   throwsType(() => build({ messages: [{ role: 'tool', content: 'x' }] }), 'invalid_request', false);
-  throwsType(() => build({ messages: [{ role: 'tool', toolCallId: 'c', content: [{ type: 'image', url: 'https://x.test/a.png' }] }] }), 'unsupported', true);
+});
+
+test('tool com imagem: output vira a lista de input_*; só texto em partes continua string; isError prefixa o texto', () => {
+  const img = { type: 'image', data: 'QUJD', mime: 'image/png' };
+  const input = build({ messages: [
+    { role: 'tool', toolCallId: 'c1', content: [img, { type: 'text', text: 'captura' }] },
+    { role: 'tool', toolCallId: 'c2', content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] },
+    { role: 'tool', toolCallId: 'c3', content: [{ type: 'text', text: 'falhou' }, img], isError: true },
+    { role: 'tool', toolCallId: 'c4', content: [img, { type: 'image', url: 'https://x.test/a.png' }], isError: true },
+  ] }).body.input;
+  assert.deepEqual(input[0].output, [{ type: 'input_image', image_url: 'data:image/png;base64,QUJD' }, { type: 'input_text', text: 'captura' }]);
+  assert.equal(input[1].output, 'ab');
+  assert.deepEqual(input[2].output, [{ type: 'input_text', text: 'Tool error: falhou' }, { type: 'input_image', image_url: 'data:image/png;base64,QUJD' }]);
+  assert.deepEqual(input[3].output[0], { type: 'input_text', text: 'Tool error:' });
+  assert.equal(input[3].output.length, 3);
+  assert.ok(input.every((i) => i.type === 'function_call_output'));
+});
+
+test('tool com mídia que a Responses não lê, ou que o modelo não declara, falha antes do fetch', () => {
+  throwsType(() => build({ messages: [{ role: 'tool', toolCallId: 'c', content: [{ type: 'audio', data: 'QUJD', format: 'mp3' }] }] }), 'unsupported', true);
+  const textOnlyModel = { ...model, input: ['text'] };
+  assert.throws(() => build({ messages: [{ role: 'tool', toolCallId: 'c', content: [{ type: 'image', url: 'https://x.test/a.png' }] }] }, { mdl: textOnlyModel }), (e) => e.name === 'ProviderError');
 });
 
 // ---------------------------------------------------------------------------------------
@@ -693,7 +714,9 @@ test('store false: reasoning sem cifra sai do input, e include pede o conteúdo 
   const compat = { supportsStore: true, reasoningFormat: 'reasoning_object' };
   const { body } = build({ effort: 'xhigh', messages: turn({ reasoningItems: [rs('rs_1'), rs('rs_2', { encrypted_content: 'ENC' })] }) }, { compat });
   assert.equal(body.store, false);
-  assert.deepEqual(body.input.filter((i) => i.type === 'reasoning').map((i) => i.id), ['rs_2']);
+  const kept = body.input.filter((i) => i.type === 'reasoning');
+  assert.deepEqual(kept, [{ type: 'reasoning', summary: [], encrypted_content: 'ENC' }]); // sem id: o item seguinte volta sem id
+  assert.equal(body.input.filter((i) => 'id' in i).length, 0);
   assert.deepEqual(body.include, ['reasoning.encrypted_content']);
   assert.deepEqual(body.reasoning, { effort: 'xhigh' });
 });
@@ -719,4 +742,24 @@ test('prompt_cache_key e prompt_cache_retention passam por params; max_output_to
   assert.equal(body.prompt_cache_retention, '24h');
   assert.equal(body.max_output_tokens, 500);
   assert.deepEqual(body.reasoning, { effort: 'xhigh' });
+});
+
+test('a ordem do providerData.order é a do turno: mensagem antes do raciocínio, chamadas intercaladas', () => {
+  const pd = { reasoningItems: [rs('rs_1'), rs('rs_2')], order: ['m', 'r:rs_1', 'c:call_a', 'r:rs_2', 'c:call_b'] };
+  const messages = [
+    { role: 'user', content: 'x' },
+    { role: 'assistant', content: 'texto', toolCalls: [
+      { id: 'call_b', name: 'f', arguments: '{}' },
+      { id: 'call_a', name: 'f', arguments: '{}', providerData: pd },
+    ] },
+  ];
+  const input = build({ messages }).body.input.slice(1);
+  assert.deepEqual(input.map((i) => i.type === 'reasoning' ? i.id : i.type === 'function_call' ? i.call_id : i.type),
+    ['message', 'rs_1', 'call_a', 'rs_2', 'call_b']);
+});
+
+test('order que não cobre tudo: o resto segue raciocínio, mensagem, chamadas', () => {
+  const pd = { reasoningItems: [rs('rs_1')], order: ['c:call_zzz'] };
+  const messages = [{ role: 'user', content: 'x' }, { role: 'assistant', content: 'texto', toolCalls: [{ id: 'call_a', name: 'f', arguments: '{}', providerData: pd }] }];
+  assert.deepEqual(build({ messages }).body.input.slice(1).map((i) => i.type), ['reasoning', 'message', 'function_call']);
 });

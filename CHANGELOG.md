@@ -5,7 +5,8 @@ Versão semântica; `0.x` enquanto a API se acomoda — cada consumidor fixa a t
 ## Não lançado
 
 - Fio `openai-responses` de volta, para a OpenAI oficial (`/v1/responses`): `gpt-6-luna` e `gpt-6.1-sol` recusam raciocínio com function tools no estilo chat. Streaming, tool calls com `call_id`, `reasoning.effort`, `max_output_tokens`, imagens e `params` (`prompt_cache_key`, `prompt_cache_retention`).
-- O raciocínio do turno com tools viaja em `providerData.reasoningItems` e volta no `input`. Com `supportsStore: true`, `store: false` e `include: ['reasoning.encrypted_content']`.
+- O raciocínio do turno com tools viaja em `providerData` (`reasoningItems` e `order`) e volta no `input` na ordem original. Com `supportsStore: true`, `store: false`, `include: ['reasoning.encrypted_content']`, e os itens voltam cifrados e sem `id`.
+- Resultado de tool com imagem ou arquivo vira a lista de `input_*` em `function_call_output.output`.
 - O texto final do evento `response.completed` sai só de itens `message` (`output_text`); o item `reasoning` nunca vira texto.
 - `structuredOutput: 'text_format'` volta ao `Compat`.
 

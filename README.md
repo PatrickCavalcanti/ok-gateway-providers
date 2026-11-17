@@ -311,12 +311,17 @@ messages.push({ role: 'assistant', content, toolCalls });
 
 Parte `reasoning` sem assinatura (raciocínio de outro provedor) é ignorada em todos os fios.
 
-No fio `openai-responses`, o raciocínio do turno que chamou tools vem no `providerData.reasoningItems` da
-primeira `tool_call` (itens `reasoning` da OpenAI, `id` `rs_…`). Devolva o `providerData` como no exemplo e o fio
-os repõe no `input` antes das chamadas. A OpenAI não dá erro sem eles, mas o modelo perde o raciocínio e
-refaz o trabalho. Com `compat.supportsStore: true` o pedido leva `store: false` e
-`include: ['reasoning.encrypted_content']`, e só os itens cifrados voltam. O texto final da resposta vem só de
-itens `message`: o item `reasoning` nunca vira texto.
+No fio `openai-responses`, o raciocínio do turno que chamou tools vem no `providerData` da primeira
+`tool_call`: `{ reasoningItems: [{ type: 'reasoning', id, summary, encrypted_content? }], order: ['r:<id>', 'm', 'c:<call_id>'] }`.
+Guarde o objeto inteiro e devolva-o no `toolCalls` da mensagem `assistant`, como no exemplo. O fio repõe os
+itens no `input` na ordem de `order`. As listas são vivas: leia o `providerData` depois do `end`, que é quando
+ele tem o estado final (a cifra pode chegar completa só no evento final). A OpenAI não dá erro sem eles, mas o
+modelo perde o raciocínio e refaz o trabalho. Com `compat.supportsStore: true` o pedido leva `store: false` e
+`include: ['reasoning.encrypted_content']`; só os itens cifrados voltam, e sem o `id`. O texto final da resposta
+vem só de itens `message`: o item `reasoning` nunca vira texto.
+
+Resultado de tool com imagem ou arquivo (`{ role: 'tool', content: [{ type: 'image', … }, { type: 'text', … }] }`)
+vai como lista de `input_*` em `function_call_output.output`; só texto continua string.
 
 ## Catálogo
 

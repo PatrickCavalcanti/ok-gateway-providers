@@ -89,7 +89,14 @@ export function buildRequest({ account, model, compat, request, apiKey }) {
 
   if (body.store === false) {
     // Sem armazenamento na OpenAI, o raciocínio só volta cifrado: o item sem `encrypted_content` é referência a algo que ela não guardou.
-    body.input = body.input.filter((/** @type {any} */ item) => item.type !== 'reasoning' || typeof item.encrypted_content === 'string');
+    // O `id` também sai: a mensagem e as chamadas voltam sem id, e um `reasoning` com id exige o item seguinte que ele nomeia.
+    body.input = body.input
+      .filter((/** @type {any} */ item) => item.type !== 'reasoning' || typeof item.encrypted_content === 'string')
+      .map((/** @type {any} */ item) => {
+        if (item.type !== 'reasoning') return item;
+        const { id: _id, ...rest } = item;
+        return rest;
+      });
   }
 
   // Campos de controle do pedido, num bloco só, depois dos params: o explícito vence. Objeto funde campo a campo
@@ -170,26 +177,86 @@ function buildInput(request, { model, provider }) {
       const text = textOnly(msg.content, 'assistant', ctx, where, true);
       const calls = msg.toolCalls ?? [];
       if (!Array.isArray(calls)) throw invalid(`${where}: toolCalls precisa ser uma lista`, ctx);
-      // Raciocínio do turno que chamou as tools (`providerData.reasoningItems`, vindo do stream): volta antes da
-      // mensagem e das chamadas. Sem ele a OpenAI não dá erro, mas o modelo perde o raciocínio e refaz o trabalho.
-      out.push(...reasoningItemsOf(calls));
       // Turno vazio não diz nada ao modelo, e a Responses API aceita itens soltos: sem texto, não há message.
-      if (text) out.push({ type: 'message', role: 'assistant', content: text });
-      calls.forEach((call, k) => {
+      /** @type {Record<string, unknown>|null} */
+      const message = text ? { type: 'message', role: 'assistant', content: text } : null;
+      /** @type {Record<string, unknown>[]} */
+      const callItems = calls.map((call, k) => {
         const at = `${where}.toolCalls[${k}]`;
         if (!call || typeof call !== 'object') throw invalid(`${at}: tool_call malformado (esperado um objeto)`, ctx);
         if (typeof call.name !== 'string' || !call.name) throw invalid(`${at}: tool_call precisa de name`, ctx);
         if (typeof call.id !== 'string' || !call.id) throw invalid(`${at}: tool_call precisa de id`, ctx);
-        out.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: call.arguments || '{}' });
+        return { type: 'function_call', call_id: call.id, name: call.name, arguments: call.arguments || '{}' };
       });
+      out.push(...assistantTurn(calls, message, callItems));
     } else if (msg.role === 'tool') {
       if (!msg.toolCallId) throw invalid(`${where}: mensagem tool sem toolCallId`, ctx);
-      const text = textOnly(msg.content, 'tool', ctx, where);
-      out.push({ type: 'function_call_output', call_id: msg.toolCallId, output: msg.isError === true ? TOOL_ERROR_PREFIX + text : text });
+      out.push({ type: 'function_call_output', call_id: msg.toolCallId, output: toolOutput(msg, model, ctx, where) });
     } else {
       throw invalid(`${where}: papel de mensagem desconhecido: ${String(/** @type {any} */ (msg).role)}`, ctx);
     }
   });
+  return out;
+}
+
+/**
+ * Resultado de tool: só texto vira string; com imagem ou arquivo, vira a lista de `input_*` que a Responses aceita
+ * em `function_call_output.output` (mesmo caminho do papel user). Com `isError`, o aviso abre o texto.
+ * @param {import('../types.js').Message} msg @param {Model} model @param {Ctx} ctx @param {string} where
+ */
+function toolOutput(msg, model, ctx, where) {
+  const isError = msg.isError === true;
+  const content = msg.content;
+  if (typeof content === 'string' || (Array.isArray(content) && content.every((p) => p?.type === 'text'))) {
+    const text = textOnly(content, 'tool', ctx, where);
+    return isError ? TOOL_ERROR_PREFIX + text : text;
+  }
+  const list = /** @type {any[]} */ (userContent(content, model, ctx, where));
+  if (!isError) return list;
+  if (list[0]?.type === 'input_text') return list.map((p, i) => (i === 0 ? { ...p, text: TOOL_ERROR_PREFIX + p.text } : p));
+  return [{ type: 'input_text', text: TOOL_ERROR_PREFIX.trimEnd() }, ...list];
+}
+
+/**
+ * Os itens de um turno do assistant, na ordem em que a resposta os deu. O raciocínio do turno
+ * (`providerData.reasoningItems`, vindo do stream) volta junto: sem ele a OpenAI não dá erro, mas o modelo perde o
+ * raciocínio e refaz o trabalho. `providerData.order` (`r:<id>`, `m`, `c:<call_id>`) diz a ordem original; o que ele
+ * não cobre (ou sem `order`) segue raciocínio, mensagem, chamadas.
+ * @param {import('../types.js').ToolCall[]} calls @param {Record<string, unknown>|null} message @param {Record<string, unknown>[]} callItems
+ */
+function assistantTurn(calls, message, callItems) {
+  const reasoning = reasoningItemsOf(calls);
+  /** @type {unknown} */
+  let order;
+  for (const call of calls) {
+    const o = /** @type {any} */ (call?.providerData)?.order;
+    if (Array.isArray(o)) { order = o; break; }
+  }
+  /** @type {Record<string, unknown>[]} */
+  const out = [];
+  const placedReasoning = new Set();
+  let placedMessage = false;
+  const placedCalls = new Set();
+  const walk = Array.isArray(order) ? order : [];
+  // Raciocínio sem lugar na ordem (sem id, por exemplo) vai primeiro, como antes de existir `order`.
+  for (const item of reasoning) {
+    const key = typeof item.id === 'string' ? `r:${item.id}` : null;
+    if (!key || !walk.includes(key)) { out.push(item); placedReasoning.add(item); }
+  }
+  for (const entry of walk) {
+    if (typeof entry !== 'string') continue;
+    if (entry === 'm') {
+      if (message && !placedMessage) { out.push(message); placedMessage = true; }
+    } else if (entry.startsWith('r:')) {
+      const item = reasoning.find((r) => r.id === entry.slice(2));
+      if (item && !placedReasoning.has(item)) { out.push(item); placedReasoning.add(item); }
+    } else if (entry.startsWith('c:')) {
+      const item = callItems.find((c) => c.call_id === entry.slice(2));
+      if (item && !placedCalls.has(item)) { out.push(item); placedCalls.add(item); }
+    }
+  }
+  if (message && !placedMessage) out.push(message);
+  for (const item of callItems) if (!placedCalls.has(item)) out.push(item);
   return out;
 }
 
@@ -555,9 +622,14 @@ export async function* parseStream(events, { account, model }) {
   /** Saiu texto (delta ou recusa): o texto do evento final só entra quando nada disso saiu. */
   let textOut = false;
   let callCount = 0;
-  /** Itens `reasoning` do turno, na ordem. Vão nos `providerData` da primeira tool call, para o chamador devolver. @type {Record<string, unknown>[]} */
+  /** Itens `reasoning` do turno. Vão nos `providerData` da primeira tool call, para o chamador devolver. @type {Record<string, unknown>[]} */
   const reasoningItems = [];
+  /** Ordem dos itens da resposta (`r:<id>`, `m`, `c:<call_id>`), para o turno voltar na mesma ordem. @type {string[]} */
+  const order = [];
+  /** O mesmo objeto em todo carregador: as duas listas são vivas, então a cópia do chamador reflete o estado final do stream. */
+  const carried = { reasoningItems, order };
   let reasoningSent = false;
+  /** @type {any} */ let firstCall = null;
   /** @type {any} */ let final = null;
   /** @type {'completed'|'incomplete'|null} */ let kind = null;
 
@@ -583,7 +655,9 @@ export async function* parseStream(events, { account, model }) {
     // O raciocínio vem antes das chamadas no turno; basta uma delas carregá-lo.
     const carry = !reasoningSent && reasoningItems.length > 0;
     if (carry) reasoningSent = true;
-    return /** @type {const} */ ({ type: 'tool_call', id, name: rec.name, arguments: text, ...(carry ? { providerData: { reasoningItems: [...reasoningItems] } } : {}) });
+    const event = { type: /** @type {const} */ ('tool_call'), id, name: rec.name, arguments: text, ...(carry ? { providerData: carried } : {}) };
+    firstCall ??= event;
+    return event;
   };
 
   for await (const ev of events) {
@@ -624,8 +698,11 @@ export async function* parseStream(events, { account, model }) {
       }
 
       case 'response.output_item.done':
-        if (chunk.item?.type === 'reasoning') keepReasoning(reasoningItems, chunk.item);
+        if (chunk.item?.type === 'reasoning') keepReasoning(reasoningItems, chunk.item, order);
+        if (chunk.item?.type === 'message') order.push('m');
         if (chunk.item?.type === 'function_call') {
+          const callKey = chunk.item.call_id || chunk.item.id;
+          if (typeof callKey === 'string' && callKey) order.push(`c:${callKey}`);
           const index = indexKey(chunk.output_index);
           const rec = registry.locateDone([...aliasesOf(chunk.item.id, chunk.item.call_id), ...index], chunk.item, index.length > 0);
           registry.absorb(rec, chunk.item);
@@ -669,6 +746,17 @@ export async function* parseStream(events, { account, model }) {
   const finalOutput = Array.isArray(final.output) ? final.output : [];
   registry.mergeFinal(finalOutput.filter((/** @type {any} */ item) => item?.type === 'function_call'));
   for (const item of finalOutput) if (item?.type === 'reasoning') keepReasoning(reasoningItems, item);
+  if (finalOutput.length) {
+    // O evento final tem a ordem de verdade e a versão mais completa de cada item.
+    order.length = 0;
+    for (const item of finalOutput) {
+      if (item?.type === 'reasoning' && typeof item.id === 'string' && reasoningItems.some((r) => r.id === item.id)) order.push(`r:${item.id}`);
+      else if (item?.type === 'message' && !order.includes('m')) order.push('m');
+      else if (item?.type === 'function_call') { const k = item.call_id || item.id; if (typeof k === 'string' && k) order.push(`c:${k}`); }
+    }
+  }
+  // Raciocínio que só o evento final trouxe, com a chamada já emitida: a primeira passa a carregá-lo.
+  if (!reasoningSent && reasoningItems.length && firstCall && !firstCall.providerData) { firstCall.providerData = carried; reasoningSent = true; }
 
   // Servidor que copia o formato pode não ter mandado o texto em delta: ele está no item final. Só texto de
   // `message` (`output_text`) é resposta: o item `reasoning` do llama.cpp também traz `content[].text`, e esse é
@@ -726,15 +814,16 @@ export async function* parseStream(events, { account, model }) {
  * Guarda um item `reasoning` para devolver ao modelo no turno seguinte (`id`, `summary` e, se veio, o
  * `encrypted_content`). Só da OpenAI: id `rs_…` ou conteúdo cifrado. O raciocínio em claro do llama.cpp
  * (`content`) não é formato de entrada, e é descartado. Repetição pelo mesmo id é ignorada.
- * @param {Record<string, unknown>[]} list @param {any} item
+ * @param {Record<string, unknown>[]} list @param {any} item @param {string[]} [order]
  */
-function keepReasoning(list, item) {
+function keepReasoning(list, item, order) {
   const id = typeof item.id === 'string' ? item.id : '';
   const encrypted = typeof item.encrypted_content === 'string' && item.encrypted_content ? item.encrypted_content : '';
   if (!encrypted && !id.startsWith('rs_')) return;
   const kept = { type: 'reasoning', ...(id ? { id } : {}), summary: Array.isArray(item.summary) ? item.summary : [], ...(encrypted ? { encrypted_content: encrypted } : {}) };
   const at = id ? list.findIndex((r) => r.id === id) : -1;
-  if (at >= 0) list[at] = kept; else list.push(kept);
+  if (at >= 0) list[at] = kept;
+  else { list.push(kept); if (order && id) order.push(`r:${id}`); }
 }
 
 /**
